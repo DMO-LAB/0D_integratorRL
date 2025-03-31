@@ -1,0 +1,4 @@
+pretraining_results/
+runs/
+wandb/
+__pycache__/
