@@ -27,7 +27,8 @@ def setup_problem(temperature_range: np.ndarray, pressure_range: np.ndarray, phi
                   fixed_temperature = None,
                   fixed_pressure = None,
                   fixed_phi = None,
-                  fixed_dt = None   
+                  fixed_dt = None,
+                  initial_mixture = None
                   ):
     """ Randomly sample a problem from the given ranges."""
     if randomize:
@@ -65,6 +66,7 @@ def setup_problem(temperature_range: np.ndarray, pressure_range: np.ndarray, phi
                             end_time=end_time,
                             timestep=timestep,
                             species_to_track=species_to_track,
+                            initial_mixture=initial_mixture,
                             reference_rtol=reference_rtol,
                             reference_atol=reference_atol,
                             state_change_threshold=state_change_threshold,
@@ -83,6 +85,7 @@ class CombustionProblem:
                  end_time: float = 1e-3,
                  timestep: float = 1e-6,
                  species_to_track: Optional[List[str]] = None,
+                 initial_mixture: str = None,
                  reference_rtol: float = 1e-10,
                  reference_atol: float = 1e-20,
                  state_change_threshold: float = 1,
@@ -108,9 +111,13 @@ class CombustionProblem:
             self.gas = ct.Solution(self.mech_file)
             
             # Set up mixture
-            self.initial_mixture = f"{self.fuel}:1, {self.oxidizer}"
+            if initial_mixture is None:
+                self.initial_mixture = f"{self.fuel}:1, {self.oxidizer}"
+            else:
+                self.initial_mixture = initial_mixture
             
             self.gas.set_equivalence_ratio(self.phi, self.fuel, self.oxidizer)
+            self.gas.TPX = self.temperature, self.pressure, self.initial_mixture
         
             # Set default species to track if none provided
             if species_to_track is None:
@@ -145,7 +152,6 @@ class CombustionProblem:
     def _compute_reference_solution(self) -> None:
         """Compute reference solution using Cantera."""
         # Set up the reactor
-        self.gas.TPX = self.temperature, self.pressure, self.initial_mixture
         reactor = ct.IdealGasConstPressureReactor(self.gas)
         sim = ct.ReactorNet([reactor])
         sim.rtol = self.reference_rtol
@@ -174,7 +180,7 @@ class CombustionProblem:
             t += self.timestep
             state_changed, state_change = self._state_changed_significantly(previous_state, reactor.thermo.state)
             stage_changes.append(state_changed)
-            # print(f"State changed: {state_changed} at step {i} with change {state_change:.6e} and temperature {reactor.T:.4e} K, stage {self.current_state}")
+            #print(f"State changed: {state_changed} at step {i} with change {state_change:.6e} and temperature {reactor.T:.4e} K, stage {self.current_state}")
             if stage_changes[-1] != stage_changes[-2]:
                 if self.current_state == CombustionStage.PREIGNITION:
                     stage_steps[self.current_state] = i
@@ -187,6 +193,7 @@ class CombustionProblem:
                 # stop the simulation after 2 * ignition steps
                 if i > 4 * stage_steps[CombustionStage.IGNITION]:
                     self.completed_steps = i
+                    print(f"Postignition stage completed at step {i}")
                     break # stop the simulation after postignition
         
         self.completed_steps = i

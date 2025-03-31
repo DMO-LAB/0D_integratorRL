@@ -1,6 +1,5 @@
 import os
 import time
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -16,351 +15,39 @@ from datetime import datetime
 from config.default_config import Args
 from agents.ppo_ import PPO
 from environment.env_wrapper import EnvManager
-
-
-# class IntegratorDataCollector:
-#     """Collects optimal integrator data from the environment."""
-    
-#     def __init__(self, env_manager, distance_threshold=0.05, verbose=True):
-#         """
-#         Initialize data collector.
-        
-#         Args:
-#             env_manager: Manager for combustion environments
-#             distance_threshold: Threshold for filtering similar observations
-#             verbose: Enable detailed logging
-#         """
-#         self.env_manager = env_manager
-#         self.distance_threshold = distance_threshold
-#         self.verbose = verbose
-        
-#     def collect_data_for_integrator(self, env, action, timeout=None):
-#         """
-#         Collect data for a specific integrator action with filtering for unique observations.
-        
-#         Args:
-#             env: Environment to collect data from
-#             action: Integrator action index
-#             timeout: Optional timeout for integration steps
-            
-#         Returns:
-#             numpy.ndarray: Filtered observation-action history
-#             dict: Collection statistics
-#         """
-#         observation, info = env.reset()
-#         obs_action_history = []
-#         filtered_history = []
-#         done = False
-#         total_reward = 0
-#         total_error = 0
-#         total_time = 0
-#         total_time_reward = 0
-#         total_error_reward = 0
-        
-#         # Initialize buffer for filtered observations (only the observation part)
-#         filtered_obs_buffer = np.empty((0, len(observation)))
-        
-#         while not done:
-#             try:
-#                 # Execute step with the selected integrator
-#                 obs, reward, terminated, truncated, info = env.step(action, timeout=timeout)
-#                 done = terminated or truncated
-                
-#                 # Store the complete information
-#                 combined_info = np.concatenate((
-#                     obs, 
-#                     [int(action)], 
-#                     [reward], 
-#                     [info.get('error', 0.0)], 
-#                     [info.get('cpu_time', 0.0)], 
-#                     [info.get('time_reward', 0.0)], 
-#                     [info.get('error_reward', 0.0)]
-#                 ))
-                
-#                 # Check if observation is significantly different from previous ones
-#                 current_obs = obs.reshape(1, -1)
-                
-#                 if len(filtered_obs_buffer) > 0:
-#                     # Calculate distances to previous observations
-#                     distances = cdist(current_obs, filtered_obs_buffer, 'euclidean')[0]
-                    
-#                     # Keep if minimum distance exceeds threshold
-#                     if np.min(distances) >= self.distance_threshold:
-#                         filtered_history.append(combined_info)
-#                         filtered_obs_buffer = np.vstack((filtered_obs_buffer, current_obs))
-#                 else:
-#                     # First observation is always kept
-#                     filtered_history.append(combined_info)
-#                     filtered_obs_buffer = np.vstack((filtered_obs_buffer, current_obs))
-                
-#                 # Track metrics regardless of filtering
-#                 obs_action_history.append(combined_info)
-#                 total_reward += reward
-#                 total_error += info.get('error', 0.0)
-#                 total_time += info.get('cpu_time', 0.0)
-#                 total_time_reward += info.get('time_reward', 0.0) 
-#                 total_error_reward += info.get('error_reward', 0.0)
-                
-#             except Exception as e:
-#                 if self.verbose:
-#                     print(f"Exception during data collection: {e}")
-#                 done = True
-        
-#         # Calculate statistics
-#         retention_rate = len(filtered_history) / len(obs_action_history) if obs_action_history else 0
-        
-#         if self.verbose and obs_action_history:
-#             print(f"Kept {len(filtered_history)} out of {len(obs_action_history)} observations "
-#                   f"({100 * retention_rate:.2f}%)")
-        
-#         stats = {
-#             'total_observations': len(obs_action_history),
-#             'filtered_observations': len(filtered_history),
-#             'retention_rate': retention_rate,
-#             'total_reward': total_reward,
-#             'total_error': total_error,
-#             'total_time': total_time,
-#             'total_time_reward': total_time_reward,
-#             'total_error_reward': total_error_reward,
-#         }
-        
-#         return (np.array(filtered_history) if filtered_history 
-#                 else np.empty((0, len(combined_info) if 'combined_info' in locals() else 0))), stats
-
-#     def combine_optimal_data(self, histories, metric='reward'):
-#         """
-#         Combine data from different integrators, selecting the optimal one based on the chosen metric.
-        
-#         Args:
-#             histories: Dictionary mapping integrator actions to their collected history arrays
-#             metric: Metric for selecting optimal integrator ('reward', 'error', 'cpu_time', etc.)
-            
-#         Returns:
-#             numpy.ndarray: Combined history with optimal entries based on metric
-#             dict: Statistics about integrator usage
-#         """
-#         # Check if we have data
-#         if not histories or all(len(h) == 0 for h in histories.values()):
-#             return np.array([]), {"error": "No valid history data available"}
-        
-#         # Get observation dimension from first non-empty history
-#         for action, history in histories.items():
-#             if len(history) > 0:
-#                 obs_dim = history.shape[1] - 6  # Subtract action, reward, error, cpu_time, time_reward, error_reward
-#                 break
-                
-#         # Map metrics to indices in the history arrays
-#         metric_indices = {
-#             'reward': obs_dim + 1,
-#             'error': obs_dim + 2,
-#             'cpu_time': obs_dim + 3,
-#             'time_reward': obs_dim + 4,
-#             'error_reward': obs_dim + 5,
-#         }
-        
-#         if metric not in metric_indices:
-#             raise ValueError(f"Unknown metric: {metric}")
-        
-#         idx = metric_indices[metric]
-#         error_idx = metric_indices['error']
-#         error_threshold = 1e-3  # Error threshold for tiebreaking
-        
-#         # Determine which metrics we want to minimize (lower is better)
-#         minimize_metrics = ['error', 'cpu_time']
-        
-#         # Extract observations for all integrators and create mapping
-#         all_obs = []
-#         obs_to_action_metric = {}
-        
-#         for action, history in histories.items():
-#             if len(history) == 0:
-#                 continue
-                
-#             for i, entry in enumerate(history):
-#                 obs_tuple = tuple(entry[:obs_dim])
-#                 metric_value = entry[idx]
-#                 error_value = entry[error_idx]
-                
-#                 if obs_tuple in obs_to_action_metric:
-#                     # Compare with existing entry
-#                     existing_action, existing_metric, existing_error = obs_to_action_metric[obs_tuple]
-                    
-#                     # Determine if new action is better
-#                     if metric in minimize_metrics:
-#                         is_better = metric_value < existing_metric
-#                     else:
-#                         is_better = metric_value > existing_metric
-                    
-#                     # Break ties using error when close
-#                     if abs(metric_value - existing_metric) / (abs(existing_metric) + 1e-10) < 0.05:
-#                         is_better = error_value < existing_error
-                        
-#                     if is_better:
-#                         obs_to_action_metric[obs_tuple] = (action, metric_value, error_value)
-#                 else:
-#                     # New observation
-#                     obs_to_action_metric[obs_tuple] = (action, metric_value, error_value)
-#                     all_obs.append(entry[:obs_dim])
-        
-#         # Create combined dataset
-#         combined_entries = []
-#         action_counts = {}
-        
-#         for obs in all_obs:
-#             obs_tuple = tuple(obs)
-#             if obs_tuple in obs_to_action_metric:
-#                 action, _, _ = obs_to_action_metric[obs_tuple]
-                
-#                 # Find the full entry from original history
-#                 for entry in histories[action]:
-#                     if np.array_equal(entry[:obs_dim], obs):
-#                         combined_entries.append(entry)
-                        
-#                         # Update action counts
-#                         action_counts[action] = action_counts.get(action, 0) + 1
-#                         break
-        
-#         # Convert to numpy array
-#         if combined_entries:
-#             combined_history = np.array(combined_entries)
-            
-#             # Calculate statistics
-#             total_count = len(combined_history)
-#             action_percentages = {action: (count / total_count) * 100 
-#                                  for action, count in action_counts.items()}
-            
-#             stats = {
-#                 'total_observations': total_count,
-#                 'action_counts': action_counts,
-#                 'action_percentages': action_percentages,
-#                 'original_counts': {action: len(history) for action, history in histories.items() if len(history) > 0},
-#                 'reduction_percentage': 100 * (1 - total_count / sum(len(h) for h in histories.values() if len(h) > 0))
-#             }
-            
-#             return combined_history, stats
-#         else:
-#             return np.array([]), {"error": "No entries matched criteria"}
-
-#     def collect_optimal_data(self, num_episodes=10, metric='reward', timeout=None):
-#         """
-#         Collect optimal integrator data across multiple episodes.
-        
-#         Args:
-#             num_episodes: Number of episodes to collect
-#             metric: Metric for selecting optimal integrator
-#             timeout: Optional timeout for integration steps
-            
-#         Returns:
-#             list: List of combined history arrays
-#             dict: Overall statistics
-#         """
-#         all_combined_history = []
-#         overall_stats = {
-#             'episode_stats': [],
-#             'total_original_observations': 0,
-#             'total_filtered_observations': 0,
-#             'episodes_completed': 0,
-#             'computation_time': 0,
-#             'action_counts': {},
-#         }
-        
-#         start_time = time.time()
-        
-#         for episode in tqdm(range(num_episodes), desc="Collecting optimal integrator data"):
-#             if self.verbose:
-#                 print(f"\nCollecting data for episode {episode+1}/{num_episodes}")
-            
-#             try:
-#                 episode_start = time.time()
-
-#                 # Collect data for each integrator with filtering
-#                 histories = {}
-#                 episode_stats = {}
-#                 env = self.env_manager.create_single_env()
-#                 for action in range(env.action_space.n):
-#                     action_name = str(env.integrator.action_list[action])
-#                     if self.verbose:
-#                         print(f"Collecting data for integrator {action}: {action_name} - Temperature: {env.problem.get_initial_state()['T']}")
-                    
-#                     # Reset environment for each integrator
-#                     env.reset()
-                    
-#                     # Collect data
-#                     history, stats = self.collect_data_for_integrator(env, action, timeout)
-#                     histories[action] = history
-#                     episode_stats[action] = stats
-                
-#                 # Combine data selecting optimal integrator for each observation
-#                 combined_history, stats = self.combine_optimal_data(histories, metric)
-                
-#                 # Calculate episode time
-#                 episode_time = time.time() - episode_start
-#                 overall_stats['computation_time'] += episode_time
-                
-#                 # Update overall statistics
-#                 for action, count in stats.get('action_counts', {}).items():
-#                     overall_stats['action_counts'][action] = overall_stats['action_counts'].get(action, 0) + count
-                
-#                 total_orig = sum(s['total_observations'] for s in episode_stats.values())
-#                 overall_stats['total_original_observations'] += total_orig
-#                 overall_stats['total_filtered_observations'] += len(combined_history)
-#                 overall_stats['episodes_completed'] += 1
-#                 overall_stats['episode_stats'].append({
-#                     'episode': episode,
-#                     'stats': stats,
-#                     'episode_time': episode_time
-#                 })
-                
-#                 # Print episode stats
-#                 if self.verbose or episode % 5 == 0:
-#                     print(f"Episode {episode+1} results ({episode_time:.2f}s):")
-#                     print(f"  Original observations: {total_orig}")
-#                     print(f"  Filtered observations: {len(combined_history)}")
-#                     print(f"  Reduction: {stats.get('reduction_percentage', 0):.1f}%")
-                    
-#                     # Print action distribution
-#                     for action, percentage in stats.get('action_percentages', {}).items():
-#                         action_name = str(env.integrator.action_list[action])
-#                         print(f"  {action_name}: {percentage:.1f}%")
-                
-#                 # Add to collection
-#                 if len(combined_history) > 0:
-#                     all_combined_history.append(combined_history)
-            
-#             except Exception as e:
-#                 print(f"Error in episode {episode+1}: {e}")
-#                 import traceback
-#                 traceback.print_exc()
-        
-#         # Calculate final statistics
-#         elapsed_time = time.time() - start_time
-        
-#         total_counts = sum(overall_stats['action_counts'].values())
-#         if total_counts > 0:
-#             overall_stats['action_percentages'] = {
-#                 action: (count / total_counts) * 100 
-#                 for action, count in overall_stats['action_counts'].items()
-#             }
-        
-#         overall_stats['total_observations'] = sum(len(h) for h in all_combined_history)
-#         overall_stats['collection_time'] = elapsed_time
-#         overall_stats['observations_per_second'] = (overall_stats['total_observations'] / elapsed_time 
-#                                                    if elapsed_time > 0 else 0)
-        
-#         if overall_stats['total_original_observations'] > 0:
-#             overall_stats['total_reduction_percentage'] = 100 * (
-#                 1 - overall_stats['total_observations'] / overall_stats['total_original_observations'])
-        
-#         return all_combined_history, overall_stats
-
-
 import numpy as np
-import time
-from tqdm import tqdm
-from scipy.spatial.distance import cdist
+import cantera as ct
 
+def parse_composition(gas, X):
+    """create a dictionary of species:fraction pairs from the gas species names and X."""
+    species_names = gas.species_names
+    composition = {}
+    for i, species in enumerate(species_names):
+        composition[species] = X[i]
+    return composition
 
-class ImprovedIntegratorDataCollector:
+data_path = '/home/elo/CODES/SCI-ML/ember/initial_conditions_uniform_z_100.npz'
+data = np.load(data_path)
+phis = data['phi']
+Ts = data['T']
+Ps = data['P']
+Ys = data['Y']
+Zs = data['Z']
+
+# Reshape 1D arrays to 2D arrays with shape (n,1) before concatenating
+phis = phis.reshape(-1,1) 
+Ts = Ts.reshape(-1,1)
+Ps = Ps.reshape(-1,1)
+Zs = Zs.reshape(-1,1)
+
+mech_file = '/home/elo/CODES/SCI-ML/RLIntegratorSelector/large_mechanism/large_mechanism/n-dodecane.yaml'
+gas = ct.Solution(mech_file)
+fuel = 'nc12h26'
+
+# combine the phi, T, P, Y into a single array
+initial_conditions = np.concatenate([phis, Ts, Ps, Zs, Ys], axis=1)
+
+class IntegratorDataCollector:
     """Collects optimal integrator data by comparing integrators at each timestep."""
     
     def __init__(self, env_manager, distance_threshold=0.05, verbose=True):
@@ -427,19 +114,29 @@ class ImprovedIntegratorDataCollector:
                 # Create identical environments for all integrators using the same random seed
                 # This ensures they have the same initial conditions and reference solution
                 seed = int(time.time() * 1000) % 10000  # Generate a seed for this episode
+
+                condition = initial_conditions[np.random.randint(0, len(initial_conditions))]
+                phi = condition[0]
+                T = condition[1]
+                P = condition[2]
+                Z = condition[3]
+                X = condition[4:]
+                composition = parse_composition(gas, X)
                 
                 # Get parameters for this problem
-                fixed_temperature = np.random.choice(self.env_manager.args.temperature_range)
-                fixed_pressure = np.random.choice(self.env_manager.args.pressure_range)
-                fixed_phi = np.random.choice(self.env_manager.args.phi_range)
+                fixed_temperature = T
+                fixed_pressure = 1
+                fixed_phi = phi
+                initial_mixture = composition
                 fixed_dt = np.random.choice(
                     self.env_manager.args.min_time_steps_range if fixed_temperature > 1000 
                     else self.env_manager.args.max_time_steps_range
                 )
+                end_time = 1e-2
                 
                 if self.verbose:
                     print(f"Episode {episode+1} parameters: T={fixed_temperature}K, P={fixed_pressure}atm, " 
-                          f"phi={fixed_phi}, dt={fixed_dt}s")
+                          f"phi={fixed_phi}, dt={fixed_dt}s, Z={Z}")
                 
                 # Create environments with same parameters for all integrators
                 envs = {}
@@ -452,6 +149,7 @@ class ImprovedIntegratorDataCollector:
                     fixed_pressure=fixed_pressure,
                     fixed_phi=fixed_phi,
                     fixed_dt=fixed_dt,
+                    initial_mixture=initial_mixture,
                     randomize=False  # Use fixed parameters
                 )
                 n_actions = env.action_space.n
@@ -1395,7 +1093,10 @@ def main():
     print(f"Results will be saved to: {output_dir}")
     
     # Create environment and agent
-    env_args = Args()
+    mech_file = '/home/elo/CODES/SCI-ML/RLIntegratorSelector/large_mechanism/large_mechanism/n-dodecane.yaml'
+    gas = ct.Solution(mech_file)
+    fuel = 'nc12h26'
+    env_args = Args(mech_file=mech_file, fuel=fuel)
     env_args.timeout = args.timeout
     env_manager = EnvManager(env_args)
     

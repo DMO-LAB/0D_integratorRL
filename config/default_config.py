@@ -49,22 +49,22 @@ class Args:
     
     # Temperature, pressure, and phi ranges
     temp_min: float = 300.0
-    temp_max: float = 1500.0
+    temp_max: float = 1800.0
     temp_step: float = 100.0
     
     press_min: float = 1.0
     press_max: float = 1.0
     press_step: float = 5.0
     
-    phi_min: float = 0.5
-    phi_max: float = 1.5
-    phi_step: float = 0.1
+    phi_min: float = 0.0
+    phi_max: float = 20.0
+    phi_step: float = 1.0
     
-    timeout: float = 0.5
+    timeout: float = 5
     
     # Time stepping parameters
-    end_time: float = 2  # s
-    min_time_steps_range: Tuple[float, float] = (1e-6, 1e-5)
+    end_time: float = 1e-1  # s
+    min_time_steps_range: Tuple[float, float] = (1e-5, 1e-5)
     max_time_steps_range: Tuple[float, float] = (1e-5, 1e-4)
     
     # Integration parameters 

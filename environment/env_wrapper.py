@@ -72,7 +72,7 @@ class EnvManager:
         return SyncVectorEnv([make_env(self.args, i) for i in range(self.args.num_envs)])
     
     
-    def create_single_env(self, end_time: float = 1e-3, fixed_temperature: float = None, fixed_pressure: float = None, fixed_phi: float = None, fixed_dt: float = None, randomize: bool = True):
+    def create_single_env(self, end_time: float = 1e-3, fixed_temperature: float = None, fixed_pressure: float = None, fixed_phi: float = None, fixed_dt: float = None, randomize: bool = True, initial_mixture: str = None):
         """Create a single environment."""
         if randomize:
             print(f"Creating a single environment with random parameters")
@@ -90,7 +90,8 @@ class EnvManager:
             fixed_pressure=fixed_pressure,
             fixed_phi=fixed_phi,
             fixed_dt=fixed_dt,
-            randomize=randomize
+            randomize=randomize,
+            initial_mixture=initial_mixture
         )
         print(f"Done setting up problem")
         
@@ -99,14 +100,12 @@ class EnvManager:
             tolerance_list=self.args.tolerance_list
         )
         integrator = ChemicalIntegrator(problem=problem, config=integrator_config)
-        print(f"Done setting up integrator")
         env = CombustionEnv(
             problem=problem,
             integrator=integrator,
             features_config=self.args.features_config,
             reward_weights=self.args.reward_weights
         )
-        print(f"Done setting up environment")
         return env
         
     def generate_environments(self, single_env=False):

@@ -1,4 +1,5 @@
 # integrator.py
+from collections import deque
 from dataclasses import dataclass
 import rk_solver_cpp
 from scipy.integrate import ode
@@ -12,6 +13,7 @@ from enum import Enum
 import threading
 import time
 import queue
+from collections import deque
 
 class IntegrationTimeoutError(Exception):
     pass
@@ -76,6 +78,7 @@ class ChemicalIntegrator:
         self.step_count = 0
         self.current_stage = CombustionStage.PREIGNITION
         self.t = 0.0
+        self.temperature_queue = deque(maxlen=10)
         # Reset gas state using equivalence ratio
         self.gas.set_equivalence_ratio(
             self.problem.phi, 
@@ -110,6 +113,32 @@ class ChemicalIntegrator:
         except Exception as e:
             print(f"[ERROR] : dydt failed with error {e}")
             return np.zeros_like(y)
+        
+
+    def check_steady_state(self, temperature_queue, initial_temperature, tolerance=0.1, increase_factor=1.2):
+        """Check if steady state is reached based on temperature standard deviation and change from initial.
+        
+        Args:
+            temperature_queue: Queue containing recent temperature values
+            initial_temperature: Initial temperature of the system
+            tolerance: Maximum allowed standard deviation of temperatures
+            temp_change_threshold: Maximum allowed fractional change from initial temperature
+            
+        Returns:
+            bool: True if steady state is reached, False otherwise
+        """
+        if len(temperature_queue) < 10:
+            return False
+            
+        mean_temperature = np.mean(temperature_queue)
+        std_temperature = np.std(temperature_queue)
+        
+        if mean_temperature > increase_factor*initial_temperature and std_temperature < tolerance:
+            print(f"Steady state reached at step {self.step_count} with mean temperature {mean_temperature} and std {std_temperature}")
+            return True
+        else:
+            #print(f"Steady state not reached at step {self.step_count} with mean temperature {mean_temperature} and std {std_temperature}")
+            return False
     
 
     def integrate_step(self, action_idx: int, timeout: Optional[float] = None) -> Dict[str, Any]:
@@ -123,6 +152,7 @@ class ChemicalIntegrator:
         method, rtol, atol = self.action_list[action_idx]
         t_end = self.t + self.timestep
         previous_state = self.y.copy()
+        self.temperature_queue.append(self.y[0])
         self.step_count += 1
         
         if timeout is None:
@@ -242,8 +272,8 @@ class ChemicalIntegrator:
                         
                 self.t = t_end
                 self.y = new_y
-                
-                if self.step_count == self.problem.completed_steps:
+                steady_state = self.check_steady_state(self.temperature_queue, self.problem.temperature)
+                if self.step_count == self.problem.completed_steps or steady_state:
                     self.end_simulation = True
                     self.stage_cpu_times[self.current_stage.value] += np.sum(self.history['cpu_times']) - self.stage_cpu_times[CombustionStage.IGNITION.value] - self.stage_cpu_times[CombustionStage.PREIGNITION.value]
             
