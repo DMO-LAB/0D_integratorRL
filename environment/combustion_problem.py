@@ -185,7 +185,7 @@ class CombustionProblem:
                     self.current_state = CombustionStage.POSTIGNITION 
             if self.current_state == CombustionStage.POSTIGNITION:
                 # stop the simulation after 2 * ignition steps
-                if i > 1.5 * stage_steps[CombustionStage.IGNITION]:
+                if i > 4 * stage_steps[CombustionStage.IGNITION]:
                     self.completed_steps = i
                     break # stop the simulation after postignition
         

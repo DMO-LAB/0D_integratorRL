@@ -39,7 +39,7 @@ class Trainer:
             has_continuous_action_space=False
         )
         
-        model_path = "pretraining_results/models/best_pretrained_actor.pth"
+        model_path = "/home/elo/CODES/SCI-ML/0D_integratorRL/pretraining_results/20250324_142206/models/best_pretrained_actor.pth"
         actor_state_dict = torch.load(model_path)
 
         print(f"Loading actor state dict from {model_path}")

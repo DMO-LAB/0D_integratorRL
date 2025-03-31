@@ -11,14 +11,18 @@ from typing import Dict
 class EnvManager:
     """Manages multiple instances of the CombustionEnv environment."""
     
-    def __init__(self, args, single_env=False):
+    def __init__(self, args, single_env=False, create_envs=True):
         """Initialize environment manager with configuration."""
         self.args = args
         self.single_env = single_env
-        if single_env:
-            self.env = self.create_single_env()
+        if create_envs:
+            if single_env:
+                self.env = self.create_single_env()
+            else:
+                self.envs = self._create_vector_env()
         else:
-            self.envs = self._create_vector_env()
+            self.env = None
+            self.envs = None
         
     def _create_vector_env(self) -> SyncVectorEnv:
         """Create vectorized environment."""
@@ -70,6 +74,10 @@ class EnvManager:
     
     def create_single_env(self, end_time: float = 1e-3, fixed_temperature: float = None, fixed_pressure: float = None, fixed_phi: float = None, fixed_dt: float = None, randomize: bool = True):
         """Create a single environment."""
+        if randomize:
+            print(f"Creating a single environment with random parameters")
+        else:
+            print(f"Creating a single environment with fixed parameters - T={fixed_temperature}, P={fixed_pressure}, phi={fixed_phi}, dt={fixed_dt}")
         problem = setup_problem(
             temperature_range=self.args.temperature_range,
             pressure_range=self.args.pressure_range,
@@ -84,19 +92,21 @@ class EnvManager:
             fixed_dt=fixed_dt,
             randomize=randomize
         )
+        print(f"Done setting up problem")
         
         integrator_config = IntegratorConfig(
             integrator_list=self.args.integrator_list,
             tolerance_list=self.args.tolerance_list
         )
         integrator = ChemicalIntegrator(problem=problem, config=integrator_config)
-    
+        print(f"Done setting up integrator")
         env = CombustionEnv(
             problem=problem,
             integrator=integrator,
             features_config=self.args.features_config,
             reward_weights=self.args.reward_weights
         )
+        print(f"Done setting up environment")
         return env
         
     def generate_environments(self, single_env=False):

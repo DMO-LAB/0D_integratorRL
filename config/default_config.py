@@ -8,7 +8,7 @@ class Args:
     seed: int = 7
     torch_deterministic: bool = True
     cuda: bool = True
-    track: bool = True
+    track: bool = False
     wandb_project_name: str = "combustion_control"
     wandb_entity: Optional[str] = None
     capture_video: bool = False
@@ -60,10 +60,10 @@ class Args:
     phi_max: float = 1.5
     phi_step: float = 0.1
     
-    timeout: float = 0.3
+    timeout: float = 0.5
     
     # Time stepping parameters
-    end_time: float = 0.2  # s
+    end_time: float = 2  # s
     min_time_steps_range: Tuple[float, float] = (1e-6, 1e-5)
     max_time_steps_range: Tuple[float, float] = (1e-5, 1e-4)
     

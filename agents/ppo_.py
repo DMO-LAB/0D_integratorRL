@@ -36,7 +36,7 @@ class RolloutBuffer:
 
 
 class ActorCritic(nn.Module):
-    def __init__(self, state_dim, action_dim, has_continuous_action_space, action_std_init):
+    def __init__(self, state_dim, action_dim, has_continuous_action_space, action_std_init, layer_size=16):
         super(ActorCritic, self).__init__()
 
         self.has_continuous_action_space = has_continuous_action_space
@@ -47,29 +47,29 @@ class ActorCritic(nn.Module):
         # actor
         if has_continuous_action_space :
             self.actor = nn.Sequential(
-                            nn.Linear(state_dim, 128),
+                            nn.Linear(state_dim, layer_size),
                             nn.Tanh(),
-                            nn.Linear(128, 128),
+                            nn.Linear(layer_size, layer_size),
                             nn.Tanh(),
-                            nn.Linear(128, action_dim),
+                            nn.Linear(layer_size, action_dim),
                             nn.Tanh()
                         )
         else:
             self.actor = nn.Sequential(
-                            nn.Linear(state_dim, 128),
+                            nn.Linear(state_dim, layer_size),
                             nn.Tanh(),
-                            nn.Linear(128, 128),
+                            nn.Linear(layer_size, layer_size),
                             nn.Tanh(),
-                            nn.Linear(128, action_dim),
+                            nn.Linear(layer_size, action_dim),
                             nn.Softmax(dim=-1)
                         )
         # critic
         self.critic = nn.Sequential(
-                        nn.Linear(state_dim, 128),
+                        nn.Linear(state_dim, layer_size),
                         nn.Tanh(),
-                        nn.Linear(128, 128),
+                        nn.Linear(layer_size, layer_size),
                         nn.Tanh(),
-                        nn.Linear(128, 1)
+                        nn.Linear(layer_size, 1)
                     )
         
     def set_action_std(self, new_action_std):

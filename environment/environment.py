@@ -119,7 +119,7 @@ class CombustionEnv(gym.Env):
             obs_size += 1
             
         if self.features_config['basic_features']:
-            obs_size += len(self.species_to_track) + 3  # species + temperature + pressure + phi
+            obs_size += len(self.species_to_track) + 1  # species + temperature
             
         if self.features_config['temporal_features']:
             obs_size += 4  # [max_rate, mean_rate, rate_variability, acceleration]
@@ -248,7 +248,7 @@ class CombustionEnv(gym.Env):
         Y_normalized = np.clip(Y, 1e-20, None)
         Y_normalized = np.log10(Y_normalized) / 20 
         
-        return np.concatenate([[T_normalized], Y_normalized, [P_normalized], [phi_normalized]])
+        return np.concatenate([[T_normalized], Y_normalized])
 
     def _get_time_feature(self) -> np.ndarray:
         """Get time-related feature."""
