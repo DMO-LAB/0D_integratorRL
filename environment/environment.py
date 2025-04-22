@@ -194,6 +194,7 @@ class CombustionEnv(gym.Env):
     def _get_observation(self) -> np.ndarray:
         """
         Construct observation vector from current state and history.
+        Also adds small Gaussian noise to help generalization.
         
         Returns:
             np.ndarray: Observation vector containing all enabled features
@@ -204,8 +205,7 @@ class CombustionEnv(gym.Env):
         if self.features_config['basic_features']:
             basic_features = self._get_basic_features()
             observation_parts.append(basic_features)
-    
-        
+
         # Temporal features
         if self.features_config['temporal_features']:
             temporal_features = self._get_temporal_features()
@@ -224,8 +224,20 @@ class CombustionEnv(gym.Env):
         
         # Combine all features
         observation = np.concatenate(observation_parts)
+        
+        # Add small Gaussian noise to observation to help generalization
+        # Scale noise based on the stage - less noise in critical stages
+        if self.integrator.current_stage == CombustionStage.PREIGNITION:
+            noise_scale = 0.01  # More noise in pre-ignition
+        elif self.integrator.current_stage == CombustionStage.IGNITION:
+            noise_scale = 0.003  # Less noise in ignition (critical stage)
+        else:  # POSTIGNITION
+            noise_scale = 0.005  # Medium noise in post-ignition
+            
+        noise = np.random.normal(0, noise_scale, observation.shape)
+        observation = observation + noise
+        
         return observation.astype(np.float32)
-    
     def calculate_equivalence_ratio_mass(self, gas, fuel_species, oxidizer_species="O2"):
         """
         Calculate the equivalence ratio phi for a given Cantera gas mixture using mass fractions.
@@ -512,48 +524,58 @@ class CombustionEnv(gym.Env):
     
     def _compute_reward(self, cpu_time, error):
         """
-        Compute reward prioritizing:
-        1. Time efficiency as primary factor (linear scaling)
-        2. Error only matters when below Etol
-        3. Heightened importance during ignition/post-ignition stages
+        Compute reward with stronger signals for stage transitions and efficiency.
         
         Args:
             cpu_time: Computation time for the step
             error: Estimated local error
-            previous_error: Error from previous step (if available)
-            epsilon: Small number to prevent division by zero
-            Etol: Error tolerance
-            time_threshold: Target computation time
-            stage: Current combustion stage
         """
+        epsilon = self.features_config['epsilon']
         
-        # 1. Linear time reward that heavily rewards speed
-        # Scaled to be between -10 and 1
+        # 1. Base time reward (significantly improved)
+        # More strongly reward faster computation
         normalized_time = cpu_time / self.features_config['time_threshold']
-        time_reward = max(-5, 1 - 2 * normalized_time)
+        time_reward = max(-3, 2 - 4 * normalized_time)  # Increased scale and steeper penalty
         
-        # 2. Simple error reward that only matters when below Etol
-        error_ratio = error / (self.features_config['Etol'] + self.features_config['epsilon'])
-        if error_ratio <= 1.0:  # Below tolerance
-            # Linear scaling from 1 (best) to 0 (at tolerance)
+        # 2. Error reward with progressive scaling
+        error_ratio = error / (self.features_config['Etol'] + epsilon)
+        
+        if error_ratio <= 0.5:  # Well below tolerance - excellent
+            error_reward = 2.0
+        elif error_ratio <= 1.0:  # Below tolerance - good
             error_reward = 1.0
-        else:  # Above tolerance
-            # Constant minimum value for being above tolerance
-            error_reward = -np.log10(error_ratio + self.features_config['epsilon'])
+        else:  # Above tolerance - penalize based on how far above
+            error_reward = -np.log10(error_ratio + epsilon)
         
-        # 3. Stage-based scaling focusing on critical phases
-        # Especially amplify time reward during ignition/post-ignition
+        # 3. Stage-based scaling with much stronger emphasis on critical phases
         if self.integrator.current_stage == CombustionStage.IGNITION:
-            time_multiplier = 2.0    # Double importance of time during ignition
-            error_multiplier = 1.2   # Slightly higher accuracy importance
+            time_multiplier = 3.0    # Triple importance of time during ignition
+            error_multiplier = 2.0   # Double accuracy importance
+            # Add significant bonus for being in ignition stage
+            stage_bonus = 5.0
         elif self.integrator.current_stage == CombustionStage.POSTIGNITION:
-            time_multiplier = 1.5    # 50% more importance for time
-            error_multiplier = 1.0   # Normal accuracy importance
+            time_multiplier = 2.0    # Double importance for time
+            error_multiplier = 1.5   # 50% more accuracy importance
+            # Moderate bonus for post-ignition
+            stage_bonus = 2.0
         else:  # PREIGNITION
             time_multiplier = 1.0    # Normal time importance
             error_multiplier = 1.0   # Normal accuracy importance
+            stage_bonus = 0.0        # No bonus
         
-        # Base weights heavily favoring time
+        # # Track stage transitions and provide strong transition bonus
+        # # This is a key addition to help the agent learn the importance of stage transitions
+        # transition_bonus = 0.0
+        # if len(self.history_buffer['stages']) >= 2:
+        #     prev_stage = self.history_buffer['stages'][-2] if len(self.history_buffer['stages']) > 1 else None
+        #     current_stage = self.integrator.current_stage
+            
+        #     if prev_stage is not None and prev_stage != current_stage:
+        #         # Strong reward for transitioning between stages
+        #         transition_bonus = 10.0
+        #         print(f"[REWARD] Stage transition bonus of {transition_bonus} applied!")
+        
+        # Base weights heavily favoring time in critical phases
         w_time = self.reward_weights['alpha']  # 80% weight on time
         w_error = self.reward_weights['beta']  # 20% weight on error
         
@@ -561,10 +583,10 @@ class CombustionEnv(gym.Env):
         final_time_reward = time_reward * time_multiplier
         final_error_reward = error_reward * error_multiplier
         
-        # Compute final reward
-        reward = w_time * final_time_reward + w_error * final_error_reward
+        # Compute final reward including stage bonus and transition bonus
+        reward = w_time * final_time_reward + w_error * final_error_reward + stage_bonus 
         
-        tanh_reward = np.tanh(reward)
+        # Record components for logging
         self.reward_components = {
             'time_reward': time_reward,
             'error_reward': error_reward,
@@ -572,11 +594,82 @@ class CombustionEnv(gym.Env):
             'final_error_reward': final_error_reward,
             'time_multiplier': time_multiplier,
             'error_multiplier': error_multiplier,
-            'final_reward': reward,
-            'tanh_reward': tanh_reward
+            'stage_bonus': stage_bonus,
+
+            'final_reward': reward
         }
         
         return reward, time_reward, error_reward
+
+
+    
+    # def _compute_reward(self, cpu_time, error):
+    #     """
+    #     Compute reward prioritizing:
+    #     1. Time efficiency as primary factor (linear scaling)
+    #     2. Error only matters when below Etol
+    #     3. Heightened importance during ignition/post-ignition stages
+        
+    #     Args:
+    #         cpu_time: Computation time for the step
+    #         error: Estimated local error
+    #         previous_error: Error from previous step (if available)
+    #         epsilon: Small number to prevent division by zero
+    #         Etol: Error tolerance
+    #         time_threshold: Target computation time
+    #         stage: Current combustion stage
+    #     """
+        
+    #     # 1. Linear time reward that heavily rewards speed
+    #     # Scaled to be between -10 and 1
+    #     normalized_time = cpu_time / self.features_config['time_threshold']
+    #     time_reward = max(-5, 1 - 2 * normalized_time)
+        
+    #     # 2. Simple error reward that only matters when below Etol
+    #     error_ratio = error / (self.features_config['Etol'] + self.features_config['epsilon'])
+    #     if error_ratio <= 1.0:  # Below tolerance
+    #         # Linear scaling from 1 (best) to 0 (at tolerance)
+    #         error_reward = 1.0
+    #     else:  # Above tolerance
+    #         # Constant minimum value for being above tolerance
+    #         error_reward = -np.log10(error_ratio + self.features_config['epsilon'])
+        
+    #     # 3. Stage-based scaling focusing on critical phases
+    #     # Especially amplify time reward during ignition/post-ignition
+    #     if self.integrator.current_stage == CombustionStage.IGNITION:
+    #         time_multiplier = 2.0    # Double importance of time during ignition
+    #         error_multiplier = 1.2   # Slightly higher accuracy importance
+    #     elif self.integrator.current_stage == CombustionStage.POSTIGNITION:
+    #         time_multiplier = 1.5    # 50% more importance for time
+    #         error_multiplier = 1.0   # Normal accuracy importance
+    #     else:  # PREIGNITION
+    #         time_multiplier = 1.0    # Normal time importance
+    #         error_multiplier = 1.0   # Normal accuracy importance
+        
+    #     # Base weights heavily favoring time
+    #     w_time = self.reward_weights['alpha']  # 80% weight on time
+    #     w_error = self.reward_weights['beta']  # 20% weight on error
+        
+    #     # Apply stage multipliers
+    #     final_time_reward = time_reward * time_multiplier
+    #     final_error_reward = error_reward * error_multiplier
+        
+    #     # Compute final reward
+    #     reward = w_time * final_time_reward + w_error * final_error_reward
+        
+    #     tanh_reward = np.tanh(reward)
+    #     self.reward_components = {
+    #         'time_reward': time_reward,
+    #         'error_reward': error_reward,
+    #         'final_time_reward': final_time_reward,
+    #         'final_error_reward': final_error_reward,
+    #         'time_multiplier': time_multiplier,
+    #         'error_multiplier': error_multiplier,
+    #         'final_reward': reward,
+    #         'tanh_reward': tanh_reward
+    #     }
+        
+    #     return reward, time_reward, error_reward
     # def _compute_reward(self, cpu_time, error):
     #     """Compute reward based on CPU time and error"""
     #     epsilon = self.features_config['epsilon']

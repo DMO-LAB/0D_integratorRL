@@ -633,8 +633,28 @@ class ChemicalIntegrator:
         state_change = np.linalg.norm(current_state - previous_state)
         return state_change > self.state_change_threshold, state_change
     
+    # def _store_state(self, y: np.ndarray, t: float, action_idx: Optional[int],
+    #                  success: bool, cpu_time: float, error: float, stage: CombustionStage, stage_value: float):
+    #     """Store the current state and integration results."""
+    #     self.history['times'].append(t)
+    #     self.history['states'].append(y.copy())
+    #     self.history['temperatures'].append(y[0])
+        
+    #     for i, spec in enumerate(self.problem.species_to_track):
+    #         idx = self.gas.species_index(spec)
+    #         self.history['species_profiles'][spec].append(y[idx + 1])
+        
+    #     if action_idx is not None:
+    #         self.history['actions_taken'].append(action_idx)
+    #         self.history['success_flags'].append(success)
+    #         self.history['cpu_times'].append(cpu_time)
+    #         self.history['errors'].append(error)
+    #         self.history['stages'].append(stage)
+    #         self.history['stage_values'].append(stage_value)
+
+    # Add this method to track stages in the history buffer
     def _store_state(self, y: np.ndarray, t: float, action_idx: Optional[int],
-                     success: bool, cpu_time: float, error: float, stage: CombustionStage, stage_value: float):
+                    success: bool, cpu_time: float, error: float, stage: CombustionStage, stage_value: float):
         """Store the current state and integration results."""
         self.history['times'].append(t)
         self.history['states'].append(y.copy())
@@ -651,6 +671,10 @@ class ChemicalIntegrator:
             self.history['errors'].append(error)
             self.history['stages'].append(stage)
             self.history['stage_values'].append(stage_value)
+            
+            # Add to the history buffer in the environment as well
+            if hasattr(self, 'env') and hasattr(self.env, 'history_buffer'):
+                self.env.history_buffer['stages'].append(stage)
     
     def plot_history(self, save_path: Optional[str] = None):
         """Plot integration history."""

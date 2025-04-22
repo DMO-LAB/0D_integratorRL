@@ -5,11 +5,12 @@ import torch
 from typing import Dict, List, Optional
 import random
 from config.default_config import Args
-from agents.ppo_ import PPO
+from agents.balanced_ppo import BalancedPPO as PPO
 from environment.env_wrapper import EnvManager
 from utils.logging_utils import Logger
 from utils.evaluation_utils import evaluate_policy,  run_episode
 from tqdm import tqdm
+from environment.combustion_problem import CombustionStage
 
 class Trainer:
     """Trainer class for PPO algorithm on combustion environments."""
@@ -64,8 +65,10 @@ class Trainer:
         torch.manual_seed(self.args.seed)
         torch.backends.cudnn.deterministic = self.args.torch_deterministic
         
+    # Fixed collect_rollout method for rl_trainer.py
+
     def collect_rollout(self, next_obs: np.ndarray) -> Dict:
-        """Collect a single rollout of experience."""
+        """Collect a single rollout of experience with frame skipping and L2 norm filtering."""
         # Run episode
         dones = False
         observation = next_obs
@@ -73,50 +76,120 @@ class Trainer:
         action_selected = []
         counter = 0
         
+        # Keep track of skipped frames
+        frame_skip = 1  # Default: don't skip
+        pre_ignition_frame_skip = 5  # Skip frames during pre-ignition
+        
+        # Store the previous observation for L2 norm comparison
+        previous_obs = observation.copy()
+        
+        # L2 norm threshold for filtering observations (adjust as needed)
+        l2_threshold = 0.05  # Minimum change required to consider a state different enough
+        
+        # Buffer for storing experiences that need to be filtered
+        temp_buffer = {
+            'states': [],
+            'actions': [],
+            'logprobs': [],
+            'state_values': [],
+            'rewards': [],
+            'is_terminals': [],
+            'stages': []
+        }
+        
         while not dones:
-            # Select action
-            action = self.agent.select_action(observation)
-            action_selected.append(action)
-      
+            # Determine if we should skip this frame based on the stage
+            current_stage = self.env_manager.env.integrator.current_stage
+            should_skip = False
+            
+            if current_stage.value == CombustionStage.PREIGNITION.value:
+                frame_skip = pre_ignition_frame_skip
+                should_skip = (counter % frame_skip != 0)
+            else:
+                frame_skip = 1  # Don't skip during ignition or post-ignition
+                
+            # Get current buffer sizes before we add to them
+            current_state_size = len(self.agent.buffer.states)
+            
+            # Select action and store in temporary variables
+            with torch.no_grad():
+                state = torch.FloatTensor(observation).float()
+                action, action_logprob, state_val = self.agent.policy_old.act(state)
+                
+            action_item = action.item()
+            action_selected.append(action_item)
+
             # Execute environment step
-            next_observation, rewards, terminateds, truncateds, infos = self.env_manager.env.step(action, timeout=self.args.timeout)
-            # print(f"[COUNTER: {counter}] Action selected: {action} - reward: {rewards} - terminated: {terminateds} - truncated: {truncateds}")
-            # print(f"[TRAINING] Info: {infos}")
+            next_observation, rewards, terminateds, truncateds, infos = self.env_manager.env.step(action_item, timeout=self.args.timeout)
             dones = np.logical_or(terminateds, truncateds)
             
             if dones:
                 print(f"[TRAINING] Terminated or truncated at step {self.env_manager.env.current_step} and global step {self.global_step}")
-                # print the action distribution
                 print(f"[TRAINING] Action distribution: {self.env_manager.env.action_distribution}")
             
-            # Store experience for each environment
-            self.agent.buffer.rewards.append(rewards)
-            self.agent.buffer.is_terminals.append(dones)
-            # Update observation
-            observation = next_observation
+            # Calculate L2 norm between current and previous observation
+            l2_norm = np.linalg.norm(next_observation - previous_obs)
+            significant_change = l2_norm > l2_threshold
             
-            if len(self.agent.buffer.rewards) != len(self.agent.buffer.state_values):
-                print(f"Reward Buffer size: {len(self.agent.buffer.rewards)} - State Value Buffer size: {len(self.agent.buffer.state_values)}")
+            # # Log significant changes in pre-ignition for debugging
+            # if significant_change and current_stage.value == CombustionStage.PREIGNITION.value:
+            #     print(f"[TRAINING] L2 norm: {l2_norm:.4f} - threshold: {l2_threshold} - significant change: {significant_change}")
+            
+            # Determine whether to store the current experience
+            if current_stage.value == CombustionStage.PREIGNITION.value:
+                # In pre-ignition: Only store if there's significant change OR it's a regular sample
+                should_store = significant_change or not should_skip
+            else:
+                # In ignition/post-ignition: Always store
+                should_store = True
+                
+            # Always store terminal states
+            if dones:
+                should_store = True
+            
+            if should_store:
+                # Store experiences directly in the PPO buffer
+                self.agent.buffer.states.append(state)
+                self.agent.buffer.actions.append(action)
+                self.agent.buffer.logprobs.append(action_logprob)
+                self.agent.buffer.state_values.append(state_val)
+                self.agent.buffer.rewards.append(rewards)
+                self.agent.buffer.is_terminals.append(dones)
+                self.agent.buffer.stages.append(current_stage.value)
+                
+                self.global_step += 1
+                
+                # Log step information
+                if 'final_info' in infos and infos['final_info'] is not None:
+                    env_info = infos['final_info']
+                    self.logger.log_episode_info(
+                        self.global_step,
+                        self.episodes_completed,
+                        env_info,
+                        end_of_episode=True
+                    )
+                elif not dones:
+                    self.logger.log_episode_info(
+                        self.global_step,
+                        self.episodes_completed,
+                        infos,
+                        end_of_episode=False
+                    )
                     
-            self.global_step += 1
-            
-            # Log step information for each environment
-            if 'final_info' in infos and infos['final_info'] is not None:
-                env_info = infos['final_info']
-                self.logger.log_episode_info(
-                    self.global_step,
-                    self.episodes_completed,
-                    env_info,
-                    end_of_episode=True
-                )
-            elif not dones:
-                self.logger.log_episode_info(
-                    self.global_step,
-                    self.episodes_completed,
-                    infos,
-                    end_of_episode=False
-                )
+                # # Log when we're storing data from pre-ignition
+                # if current_stage.value == CombustionStage.PREIGNITION.value:
+                #     if significant_change:
+                #         print(f"[TRAINING - {counter}] Storing significant pre-ignition change - L2 norm: {l2_norm:.4f}")
+                #     elif not should_skip:
+                #         print(f"[TRAINING - {counter}] Storing regular pre-ignition sample (not skipped)")
+            # else:
+            #     print(f"[TRAINING] Skipping pre-ignition sample - L2 norm: {l2_norm:.4f} - frame: {counter}")
+                
+            # Always update observation (even when skipping)
+            previous_obs = next_observation.copy()
+            observation = next_observation
             counter += 1
+            
         action_selected = np.array(action_selected)
         return observation, action_selected
     
