@@ -38,12 +38,7 @@ class Trainer:
             eps_clip=args.clip_coef,
             has_continuous_action_space=False
         )
-        
-        model_path =  "/home/elo/CODES/SCI-ML/0D_integratorRL/results/20250331_165319/models/best_pretrained_actor.pth"
-        actor_state_dict = torch.load(model_path)
-
-        print(f"Loading actor state dict from {model_path}")
-        self.agent.policy.actor.load_state_dict(actor_state_dict)
+    
 
         
         # Training metrics
@@ -76,13 +71,17 @@ class Trainer:
         observation = next_obs
         
         action_selected = []
+        counter = 0
         
         while not dones:
             # Select action
             action = self.agent.select_action(observation)
             action_selected.append(action)
+      
             # Execute environment step
             next_observation, rewards, terminateds, truncateds, infos = self.env_manager.env.step(action, timeout=self.args.timeout)
+            # print(f"[COUNTER: {counter}] Action selected: {action} - reward: {rewards} - terminated: {terminateds} - truncated: {truncateds}")
+            # print(f"[TRAINING] Info: {infos}")
             dones = np.logical_or(terminateds, truncateds)
             
             if dones:
@@ -117,15 +116,17 @@ class Trainer:
                     infos,
                     end_of_episode=False
                 )
-            
+            counter += 1
         action_selected = np.array(action_selected)
         return observation, action_selected
     
     def train_iteration(self) -> Dict:
         """Run a single training iteration."""
         
+        
         # Reset environments at the start of iteration
         next_obs, _ = self.env_manager.env.reset()
+
         
         # Clear the buffer at the start of each iteration
         self.agent.buffer.clear()
@@ -174,6 +175,10 @@ class Trainer:
                 # Regenerate environments periodically
                 if iteration % self.args.env_reset_frequency == 0:
                     self.env_manager.generate_environments(single_env=True)
+                    print(f"[TRAINING] Regenerating environments at iteration {iteration}")
+                    # plot the reference solution
+                    self.env_manager.env.problem.plot_reference_solution(save_path=os.path.join(self.work_dir, f"reference_solution_{iteration}.png"))
+                    print(f"[TRAINING] Reference solution plotted at iteration {iteration}  saved at {self.work_dir}/reference_solution_{iteration}.png")
                 
         except KeyboardInterrupt:
             print("\nTraining interrupted by user. Cleaning up...")

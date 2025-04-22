@@ -1,14 +1,14 @@
 from dataclasses import dataclass, field
 from typing import Optional, List, Tuple, Dict
-
+import numpy as np
 @dataclass
 class Args:
     # Training settings
     exp_name: str = "combustion_ppo"
-    seed: int = 7
+    seed: int = np.random.randint(0, 1000000)
     torch_deterministic: bool = True
     cuda: bool = True
-    track: bool = False
+    track: bool = True
     wandb_project_name: str = "combustion_control"
     wandb_entity: Optional[str] = None
     capture_video: bool = False
@@ -39,7 +39,7 @@ class Args:
     total_timesteps: int = 1000000
     env_reset_frequency: int = 2  # Reset environment every N iterations
     save_frequency: int = 50        # Save checkpoint every N iterations
-    eval_frequency: int = 50       # Run evaluation every N iterations
+    eval_frequency: int = 10       # Run evaluation every N iterations
     num_eval_episodes: int = 1    # Number of episodes to run during evaluation
     
     # Problem setup parameters
@@ -49,28 +49,32 @@ class Args:
     
     # Temperature, pressure, and phi ranges
     temp_min: float = 300.0
-    temp_max: float = 1800.0
-    temp_step: float = 100.0
+    temp_max: float = 1500.0
+    temp_step: float = 50.0
     
     press_min: float = 1.0
     press_max: float = 1.0
-    press_step: float = 5.0
+    press_step: float = 1
     
     phi_min: float = 0.0
-    phi_max: float = 20.0
+    phi_max: float = 10
     phi_step: float = 1.0
     
     timeout: float = 5
     
     # Time stepping parameters
-    end_time: float = 1e-1  # s
+    end_time: float = 0.1  # s
     min_time_steps_range: Tuple[float, float] = (1e-5, 1e-5)
     max_time_steps_range: Tuple[float, float] = (1e-5, 1e-4)
     
     # Integration parameters 
     reference_rtol: float = 1e-10
     reference_atol: float = 1e-20
-    integrator_list: List[str] = field(default_factory=lambda: ['CPP_RK23', 'bdf'])
+    # integrator_list: List[str] = field(default_factory=lambda: ['ARKODE_HEUN_EULER', 'ARKODE_ZONNEVELD', 
+    #                                                            'CVODE_BDF', 'ARKODE_KVAERNO_4_2_3',
+    #                                                              'ARKODE_SDIRK_5_3_4'])
+    integrator_list: List[str] = field(default_factory=lambda: ['ARKODE_HEUN_EULER', 
+                                                               'CVODE_BDF', 'ARKODE_KVAERNO_4_2_3'])
     tolerance_list: List[Tuple[float, float]] = field(
         default_factory=lambda: [(1e-6, 1e-8)]
     )
@@ -80,7 +84,7 @@ class Args:
         'temporal_features': False,
         'species_features': False,
         'basic_features': True,
-        'include_time_step': False,
+        'include_phi': False,
         'window_size': 5,
         'epsilon': 1e-10,
         'include_stage': False,
@@ -111,9 +115,10 @@ class Args:
         import numpy as np
         
         # Create numpy arrays from range parameters
-        self.temperature_range = np.arange(self.temp_min, self.temp_max + self.temp_step, self.temp_step)
-        self.pressure_range = np.arange(self.press_min, self.press_max + self.press_step, self.press_step)
-        self.phi_range = np.arange(self.phi_min, self.phi_max + self.phi_step, self.phi_step)
+        self.temperature_range = np.linspace(self.temp_min, self.temp_max, 101)  # Initial temperature range
+        self.pressure_range = np.array([self.press_min])  # Pressure in atm
+        self.phi_range = np.linspace(self.phi_min, self.phi_max, 50)  # Equivalence ratio
+        
         
         # # Calculate the number of steps based on end_time and smallest timestep
         # min_timestep = min(self.min_time_steps_range[0], self.max_time_steps_range[0])

@@ -6,9 +6,14 @@ from typing import Dict, Any, Optional, Tuple, Union
 from enum import Enum
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from environment.integrator import ChemicalIntegrator, IntegratorConfig
+from environment.modified_integrator import ChemicalIntegrator, IntegratorConfig
 from environment.combustion_problem import CombustionProblem, setup_problem, CombustionStage
 import cantera as ct
+import os
+os.environ['MPLBACKEND'] = 'Agg'
+
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
 
 class CombustionEnv(gym.Env):
     """Reinforcement learning environment for chemical kinetics integration."""
@@ -62,7 +67,7 @@ class CombustionEnv(gym.Env):
             'temporal_features': True,
             'species_features': False,
             'basic_features': True,
-            'include_time_step': True,
+            'include_phi': True,
             'window_size': 5,
             'include_stage': True,
             'epsilon': 1e-6,
@@ -115,7 +120,7 @@ class CombustionEnv(gym.Env):
         obs_size = 0
         
         # Calculate observation size based on enabled features
-        if self.features_config['include_time_step']:
+        if self.features_config['include_phi']:
             obs_size += 1
             
         if self.features_config['basic_features']:
@@ -199,11 +204,7 @@ class CombustionEnv(gym.Env):
         if self.features_config['basic_features']:
             basic_features = self._get_basic_features()
             observation_parts.append(basic_features)
-        
-        # Time step feature
-        if self.features_config['include_time_step']:
-            time_feature = self._get_time_feature()
-            observation_parts.append(time_feature)
+    
         
         # Temporal features
         if self.features_config['temporal_features']:
@@ -224,6 +225,75 @@ class CombustionEnv(gym.Env):
         # Combine all features
         observation = np.concatenate(observation_parts)
         return observation.astype(np.float32)
+    
+    def calculate_equivalence_ratio_mass(self, gas, fuel_species, oxidizer_species="O2"):
+        """
+        Calculate the equivalence ratio phi for a given Cantera gas mixture using mass fractions.
+        
+        Args:
+            gas (ct.Solution): Cantera Solution object with current state
+            fuel_species (str or list): Name(s) of fuel species
+            oxidizer_species (str): Name of oxidizer species (default: "O2")
+        
+        Returns:
+            float: Equivalence ratio phi
+        """
+        import numpy as np
+        
+        # Convert fuel_species to list if it's a string
+        if isinstance(fuel_species, str):
+            fuel_species = [fuel_species]
+            
+        # Get species indices
+        fuel_indices = [gas.species_index(species) for species in fuel_species]
+        oxidizer_index = gas.species_index(oxidizer_species)
+        
+        # Get molecular weights
+        MW = gas.molecular_weights
+        MW_fuel = [MW[i] for i in fuel_indices]
+        MW_oxidizer = MW[oxidizer_index]
+        
+        # Get current mass fractions
+        Y = gas.Y
+        
+        # Get the actual mass ratio (fuel to oxidizer)
+        Y_fuel = np.sum([Y[i] for i in fuel_indices])
+        Y_oxidizer = Y[oxidizer_index]
+        
+        # Convert to molar ratio for stoichiometric calculations
+        # (F/O)_molar = (F/O)_mass * (MW_O / MW_F)
+        actual_molar_ratio = (Y_fuel / Y_oxidizer) * (MW_oxidizer / np.mean(MW_fuel)) if Y_oxidizer > 0 else float('inf')
+        
+        # Define element search patterns to account for case sensitivity
+        carbon_elements = ['C']
+        hydrogen_elements = ['H']
+        oxygen_elements = ['O']
+        
+        # Calculate stoichiometric coefficients for complete combustion
+        # For each fuel, calculate how much oxygen is needed for complete combustion
+        stoich_O2_needed = 0
+        X = gas.X  # We need mole fractions for stoichiometric calculations
+        
+        for fuel_idx in fuel_indices:
+            # Get number of C, H, and O atoms in fuel molecule, checking both cases
+            n_C = sum(gas.n_atoms(fuel_idx, elem) for elem in carbon_elements)
+            n_H = sum(gas.n_atoms(fuel_idx, elem) for elem in hydrogen_elements)
+            n_O = sum(gas.n_atoms(fuel_idx, elem) for elem in oxygen_elements)
+            
+            # Calculate O2 needed for this fuel:
+            # CxHyOz + (x + y/4 - z/2) O2 → x CO2 + (y/2) H2O
+            stoich_coeff = n_C + n_H/4.0 - n_O/2.0
+            stoich_O2_needed += stoich_coeff * X[fuel_idx]
+        
+        # Calculate molar stoichiometric ratio (fuel to oxidizer)
+        X_fuel = np.sum([X[i] for i in fuel_indices])
+        stoich_molar_ratio = X_fuel / stoich_O2_needed if stoich_O2_needed > 0 else float('inf')
+        
+        # Calculate equivalence ratio
+        phi = actual_molar_ratio / stoich_molar_ratio if stoich_molar_ratio > 0 else float('inf')
+        
+        return phi
+
 
     def _get_basic_features(self) -> np.ndarray:
         """Get basic state features."""
@@ -236,9 +306,13 @@ class CombustionEnv(gym.Env):
         P_normalized = P / ct.one_atm # normalized to 1 atm
         
         # Phi normalization
-        phi = self.problem.phi
-        phi_normalized = phi # normalized to 1
-        
+        phi = self.calculate_equivalence_ratio_mass(self.integrator.gas, self.integrator.gas.species_names[self.problem.fuel_index], self.integrator.gas.species_names[self.problem.oxidizer_index])
+        phi_normalized = np.maximum(phi, 1e-3)
+        phi_normalized = np.minimum(phi_normalized, 1e4)
+        phi_normalized = np.log10(phi_normalized)/3
+
+        # print(f"phi: {phi}, phi_normalized: {phi_normalized}")
+        # print("**************************************************")
         
         # Species mass fractions (log-transformed)
         Y = np.array([
@@ -247,8 +321,10 @@ class CombustionEnv(gym.Env):
         ])
         Y_normalized = np.clip(Y, 1e-20, None)
         Y_normalized = np.log10(Y_normalized) / 20 
-        
-        return np.concatenate([[T_normalized], Y_normalized])
+        if self.features_config['include_phi']:
+            return np.concatenate([[T_normalized,phi_normalized], Y_normalized])
+        else:
+            return np.concatenate([[T_normalized], Y_normalized])
 
     def _get_time_feature(self) -> np.ndarray:
         """Get time-related feature."""
@@ -328,7 +404,8 @@ class CombustionEnv(gym.Env):
                     'cpu_time': result['cpu_time'],
                     'message': result['message'],
                     'termination_reason': 'timed_out',
-                    'timed_out': True
+                    'timed_out': True,
+                    'success': False
                 }
             )
         
@@ -344,7 +421,8 @@ class CombustionEnv(gym.Env):
                     'cpu_time': result['cpu_time'],
                     'message': result['message'],
                     'termination_reason': 'integration_failure',
-                    'timed_out': False
+                    'timed_out': False,
+                    'success': False
                 }
             )
             
@@ -537,7 +615,8 @@ class CombustionEnv(gym.Env):
             'cummulative_cpu_time': sum(self.episode_times),
             'cummulative_error': sum(self.episode_errors),
             'timed_out': False,
-            'action_distribution': self.action_distribution
+            'action_distribution': self.action_distribution,
+            'success': result['success']
         }
         
         if is_terminal:
@@ -548,7 +627,8 @@ class CombustionEnv(gym.Env):
                 'episode_mean_reward': np.mean(self.episode_rewards),
                 'episode_mean_error': np.mean(self.episode_errors),
                 'episode_mean_time': np.mean(self.episode_times),
-                'episode_statistics': episode_stats
+                'episode_statistics': episode_stats,
+                'success': result['success']
             })
             
             # Update best episode if applicable

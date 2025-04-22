@@ -96,8 +96,10 @@ class ActorCritic(nn.Module):
         if deterministic:
             if self.has_continuous_action_space:
                 action = action_mean
+                print(f"[ACTOR INFO] - Action: {action}")
             else:
                 action = action_probs.argmax(dim=-1)
+                print(f"[ACTOR INFO] - Action probabilities: {action_probs} - Action: {action} - state: {state}")
         else:
             action = dist.sample()
         action_logprob = dist.log_prob(action)

@@ -2,3 +2,16 @@ pretraining_results/
 runs/
 wandb/
 __pycache__/
+results/
+integrator_comparison/
+*.ipynb
+*.png
+*.identifier
+*.pyc
+*.pkl
+*.json
+*.csv
+*.jsonl
+notebooks/
+*.npz
+*.npy

@@ -13,12 +13,14 @@ def evaluate_policy(env, agent, num_episodes: int = 4, work_dir: str = 'evaluati
     """
     Evaluate a policy and compare it with fixed actions, generating comprehensive metrics and visualizations.
     """
+    print(f"[EVALUATION INFO] - Temperature: {env.problem.temperature} - phi: {env.problem.phi} - pressure: {env.problem.pressure} -end time: {env.problem.end_time}")
     os.makedirs(work_dir, exist_ok=True)
     work_dir = work_dir + '/evaluation_plots'
     os.makedirs(work_dir, exist_ok=True)
     
     if fixed_actions is None:
-        fixed_actions = [1, 0, None]
+        fixed_actions = [i for i in range(len(env.integrator.action_list))]
+        fixed_actions.append(None)
 
     # Run comparison with fixed actions
     comparison_results, good_policy = compare_fixed_actions(env, agent, fixed_actions, device, work_dir, iteration)
@@ -55,21 +57,23 @@ def run_episode(agent, env, default_action: Optional[int] = None, device: torch.
         
         obs, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
-        
-        total_reward += reward
-        total_error += info['error']
-        total_time += info['cpu_time']
-        total_time_reward += info['time_reward']
-        total_error_reward += info['error_reward']
+        if info['success']:
+            total_reward += reward
+            total_error += info['error']
+            total_time += info['cpu_time']
+            total_time_reward += info['time_reward']
+            total_error_reward += info['error_reward']
+        else:
+            print(f"Episode failed - {info}")
     
     if default_action is None:
         print(f"[EVALUATION] RL POLICY EVALUATION - Reward: {total_reward:.2f} - CPU Time: {total_time:.2f} - Error: {total_error:.4f}")
         print(f"[EVALUATION] Action Distribution: {env.action_distribution}")
-        if work_dir is not None:
-            plot_path = work_dir + f'/rl_policy_evaluation_{iteration}.png'
-            env.render('human')
-            plt.savefig(plot_path)
-            plt.close()
+        # if work_dir is not None:
+        #     plot_path = work_dir + f'/rl_policy_evaluation_{iteration}.png'
+        #     env.render('human')
+        #     plt.savefig(plot_path)
+        #     plt.close()
         
     return total_reward, total_error, total_time, total_time_reward, total_error_reward, env
 
@@ -111,14 +115,20 @@ def compare_fixed_actions(env, agent, fixed_actions: List[int], device: torch.de
             )
             
             # Save plot for this action
-            if work_dir is not None:
-                plot_path = work_dir + f'/fixed_action_{action}_evaluation_{iteration}.png'
+            if work_dir is not None :
+                if action is None:
+                    plot_path = work_dir + f'/rl_policy_evaluation_{iteration}.png'
+                else:
+                    plot_path = work_dir + f'/fixed_action_{action}_evaluation_{iteration}.png'
                 env_state.render(plot_path)
             
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             print(f"Error running fixed action {action}: {e}")
             continue
-            
+
+    # print(f"Results: {results}")
     # check if the last action has the best cpu time
     min_cpu_time = min(results['cpu_times'])
     best_action = results['actions'][results['cpu_times'].index(min_cpu_time)]

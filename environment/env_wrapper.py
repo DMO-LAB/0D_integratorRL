@@ -1,7 +1,8 @@
 import gymnasium as gym
 import cantera as ct
 from environment.environment import CombustionEnv
-from environment.integrator import ChemicalIntegrator, IntegratorConfig
+# from environment.integrator import ChemicalIntegrator, IntegratorConfig
+from environment.modified_integrator import ChemicalIntegrator, IntegratorConfig
 from environment.combustion_problem import CombustionProblem, setup_problem
 import numpy as np
 from gymnasium.vector import SyncVectorEnv
@@ -72,12 +73,13 @@ class EnvManager:
         return SyncVectorEnv([make_env(self.args, i) for i in range(self.args.num_envs)])
     
     
-    def create_single_env(self, end_time: float = 1e-3, fixed_temperature: float = None, fixed_pressure: float = None, fixed_phi: float = None, fixed_dt: float = None, randomize: bool = True, initial_mixture: str = None):
+    def create_single_env(self, end_time: float = 1e-1, fixed_temperature: float = None, fixed_pressure: float = None, fixed_phi: float = None, fixed_dt: float = None, randomize: bool = True, initial_mixture: str = None):
         """Create a single environment."""
         if randomize:
             print(f"Creating a single environment with random parameters")
         else:
             print(f"Creating a single environment with fixed parameters - T={fixed_temperature}, P={fixed_pressure}, phi={fixed_phi}, dt={fixed_dt}")
+        # print(f"initial_mixture in create_single_env: {initial_mixture}")
         problem = setup_problem(
             temperature_range=self.args.temperature_range,
             pressure_range=self.args.pressure_range,
@@ -146,3 +148,5 @@ class EnvManager:
     def close(self):
         """Close all environments."""
         self.env.close()
+
+

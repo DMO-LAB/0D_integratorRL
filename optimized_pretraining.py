@@ -26,27 +26,68 @@ def parse_composition(gas, X):
         composition[species] = X[i]
     return composition
 
-data_path = '/home/elo/CODES/SCI-ML/ember/initial_conditions_uniform_z_100.npz'
-data = np.load(data_path)
-phis = data['phi']
-Ts = data['T']
-Ps = data['P']
-Ys = data['Y']
-Zs = data['Z']
+# Function to load multiple fuel datasets
+def load_fuel_data(fuel_data_paths):
+    """
+    Load data for multiple fuels from specified paths.
+    
+    Args:
+        fuel_data_paths: Dictionary mapping fuel names to their data paths
+        
+    Returns:
+        Dictionary of fuel data, where each entry contains initial conditions
+    """
+    all_fuel_data = {}
+    
+    for fuel_name, data_path in fuel_data_paths.items():
+        print(f"Loading data for fuel: {fuel_name} from {data_path}")
+        data = np.load(data_path)
+        
+        # Extract arrays and reshape 1D arrays to 2D
+        phis = data['phi'].reshape(-1, 1)
+        Ts = data['T'].reshape(-1, 1)
+        Ps = data['P'].reshape(-1, 1) / ct.one_atm
+        Ys = data['Y']
+        
+        # Include Z if available
+        if 'Z' in data:
+            Zs = data['Z'].reshape(-1, 1)
+            initial_conditions = np.concatenate([phis, Ts, Ps, Zs, Ys], axis=1)
+        else:
+            initial_conditions = np.concatenate([phis, Ts, Ps, Ys], axis=1)
+        
+        all_fuel_data[fuel_name] = {
+            'initial_conditions': initial_conditions,
+            'has_Z': 'Z' in data
+        }
+        
+        print(f"  Loaded {len(initial_conditions)} conditions for {fuel_name}")
+    
+    return all_fuel_data
 
-# Reshape 1D arrays to 2D arrays with shape (n,1) before concatenating
-phis = phis.reshape(-1,1) 
-Ts = Ts.reshape(-1,1)
-Ps = Ps.reshape(-1,1)
-Zs = Zs.reshape(-1,1)
 
-mech_file = '/home/elo/CODES/SCI-ML/RLIntegratorSelector/large_mechanism/large_mechanism/n-dodecane.yaml'
-gas = ct.Solution(mech_file)
-fuel = 'nc12h26'
+# Dictionary mapping fuel names to their mechanism files
+FUEL_MECHANISMS = {
+    'n-dodecane': '/home/elo/CODES/SCI-ML/RLIntegratorSelector/large_mechanism/large_mechanism/n-dodecane.yaml',
+    # 'octane': '/home/elo/CODES/SCI-ML/RLIntegratorSelector/large_mechanism/large_mechanism/octane.yaml',
+    #'methane': 'gri30.yaml',
+}
 
-# combine the phi, T, P, Y into a single array
-initial_conditions = np.concatenate([phis, Ts, Ps, Zs, Ys], axis=1)
+# Dictionary mapping fuel names to their canonical species name in the mechanism
+FUEL_SPECIES = {
+    'n-dodecane': 'nc12h26',
+    # 'octane': 'IC8H18',
+    #'methane': 'CH4',
+}
 
+# Update fuel data paths - you should update these with your actual paths
+FUEL_DATA_PATHS = {
+    'n-dodecane': '/home/elo/CODES/SCI-ML/RLIntegratorSelector/ember_samples_uniform_z_n-dodecane/initial_conditions_uniform_z_n_dodecane.npz',
+    # 'octane': '/home/elo/CODES/SCI-ML/RLIntegratorSelector/ember_samples_uniform_z_octane/initial_conditions_uniform_z_octane.npz',
+    #'methane': '/home/elo/CODES/SCI-ML/RLIntegratorSelector/ember_samples_uniform_z_CH4/initial_conditions_uniform_z_ch4.npz',
+}
+
+# initial_conditions = np.concatenate([phis, Ts, Ps, Zs, Ys], axis=1)
 class IntegratorDataCollector:
     """Collects optimal integrator data by comparing integrators at each timestep."""
     
@@ -63,14 +104,16 @@ class IntegratorDataCollector:
         self.distance_threshold = distance_threshold
         self.verbose = verbose
         
-    def collect_optimal_data(self, num_episodes=10, metric='reward', timeout=None):
+    def collect_optimal_data(self, all_fuel_data, num_episodes=10, metric='reward', timeout=None, output_dir=None):
         """
-        Collect optimal integrator data across multiple episodes.
+        Collect optimal integrator data across multiple episodes for multiple fuels.
         
         Args:
-            num_episodes: Number of episodes to collect
+            all_fuel_data: Dictionary of fuel data with initial conditions
+            num_episodes: Number of episodes to collect per fuel
             metric: Metric for selecting optimal integrator ('reward', 'error', 'cpu_time', etc.)
             timeout: Optional timeout for integration steps
+            output_dir: Directory to save dataset snapshots
             
         Returns:
             list: List of combined history arrays
@@ -84,6 +127,7 @@ class IntegratorDataCollector:
             'episodes_completed': 0,
             'computation_time': 0,
             'action_counts': {},
+            'fuel_stats': {}  # Add fuel-specific statistics
         }
         
         start_time = time.time()
@@ -104,179 +148,298 @@ class IntegratorDataCollector:
         error_idx = metric_indices['error']
         minimize_metrics = ['error', 'cpu_time']
         
-        for episode in tqdm(range(num_episodes), desc="Collecting optimal integrator data"):
-            if self.verbose:
-                print(f"\nCollecting data for episode {episode+1}/{num_episodes}")
+        # Calculate episodes per fuel
+        fuels = list(all_fuel_data.keys())
+        episodes_per_fuel = max(1, num_episodes // len(fuels))
+        
+        # Distribute remaining episodes
+        remaining_episodes = num_episodes - (episodes_per_fuel * len(fuels))
+        
+        # Iterate through all fuels
+        for fuel_idx, fuel_name in enumerate(fuels):
+            # Determine number of episodes for this fuel
+            fuel_episodes = episodes_per_fuel + (1 if fuel_idx < remaining_episodes else 0)
             
-            try:
-                episode_start = time.time()
+            print(f"\n=== Collecting data for fuel: {fuel_name} ({fuel_episodes} episodes) ===")
+            
+            # Initialize fuel-specific stats
+            overall_stats['fuel_stats'][fuel_name] = {
+                'episodes': 0,
+                'observations': 0,
+                'filtered_observations': 0,
+                'action_counts': {},
+                'computation_time': 0
+            }
+            
+            # Get the fuel mechanism and data
+            mech_file = FUEL_MECHANISMS.get(fuel_name)
+            if not mech_file:
+                print(f"Warning: No mechanism file defined for {fuel_name}. Skipping.")
+                continue
                 
-                # Create identical environments for all integrators using the same random seed
-                # This ensures they have the same initial conditions and reference solution
-                seed = int(time.time() * 1000) % 10000  # Generate a seed for this episode
-
-                condition = initial_conditions[np.random.randint(0, len(initial_conditions))]
-                phi = condition[0]
-                T = condition[1]
-                P = condition[2]
-                Z = condition[3]
-                X = condition[4:]
-                composition = parse_composition(gas, X)
+            fuel_species = FUEL_SPECIES.get(fuel_name)
+            if not fuel_species:
+                print(f"Warning: No fuel species defined for {fuel_name}. Skipping.")
+                continue
                 
-                # Get parameters for this problem
-                fixed_temperature = T
-                fixed_pressure = 1
-                fixed_phi = phi
-                initial_mixture = composition
-                fixed_dt = np.random.choice(
-                    self.env_manager.args.min_time_steps_range if fixed_temperature > 1000 
-                    else self.env_manager.args.max_time_steps_range
-                )
-                end_time = 1e-2
-                
+            fuel_data = all_fuel_data.get(fuel_name)
+            if not fuel_data:
+                print(f"Warning: No data found for {fuel_name}. Skipping.")
+                continue
+            
+            # Update env_manager with fuel-specific settings
+            self.env_manager.args.mech_file = mech_file
+            self.env_manager.args.fuel = fuel_species
+            
+            # Load the gas object for this fuel
+            gas = ct.Solution(mech_file)
+            
+            # Get initial conditions for this fuel
+            initial_conditions = fuel_data['initial_conditions']
+            has_Z = fuel_data.get('has_Z', False)
+            
+            for episode in tqdm(range(fuel_episodes), desc=f"Collecting data for {fuel_name}"):
                 if self.verbose:
-                    print(f"Episode {episode+1} parameters: T={fixed_temperature}K, P={fixed_pressure}atm, " 
-                          f"phi={fixed_phi}, dt={fixed_dt}s, Z={Z}")
+                    print(f"\nCollecting data for {fuel_name} - episode {episode+1}/{fuel_episodes}")
                 
-                # Create environments with same parameters for all integrators
-                envs = {}
-                n_actions = None
-                
-                # First pass to determine number of actions and create environments
-                env = self.env_manager.create_single_env(
-                    end_time=self.env_manager.args.end_time,
-                    fixed_temperature=fixed_temperature,
-                    fixed_pressure=fixed_pressure,
-                    fixed_phi=fixed_phi,
-                    fixed_dt=fixed_dt,
-                    initial_mixture=initial_mixture,
-                    randomize=False  # Use fixed parameters
-                )
-                n_actions = env.action_space.n
-                
-                # Create one environment per integrator with same parameters
-                for action in range(n_actions):
-                    envs[action] = self.env_manager.create_single_env(
-                        end_time=self.env_manager.args.end_time,
+                try:
+                    episode_start = time.time()
+                    
+                    # Generate a seed for this episode
+                    seed = int(time.time() * 1000) % 10000
+                    
+                    T_range = (300, 1500)
+                    P = 1
+                    phi_range = (0.1, 5)
+                    
+                    T = np.random.uniform(T_range[0], T_range[1])
+                    phi = np.random.uniform(phi_range[0], phi_range[1])
+
+                    if episode % 10 == 0:
+                        # choose very small phi
+                        phi_low = np.random.uniform(0, 0.0001) # 0.0001
+                        phi_high = np.random.uniform(5, 100) # 0.001
+                        phi = np.random.choice([phi_low, phi_high])
+                    # Get parameters for this problem
+                    fixed_temperature = T
+                    fixed_pressure = P  # Use actual pressure value from data
+                    fixed_phi = phi
+                    # calculate the initial mixture based on phi
+                    initial_mixture = f"{fuel_species}:1, O2:1, N2:3.76"
+                    fixed_dt = np.random.choice(
+                        self.env_manager.args.min_time_steps_range if fixed_temperature > 1000 
+                        else self.env_manager.args.max_time_steps_range
+                    )
+                    end_time = 0.5
+                    
+                    print(f"Condition: Fuel: {fuel_name}, Episode {episode+1} parameters: T={fixed_temperature}K, " 
+                          f"phi={fixed_phi}, dt={fixed_dt}s, end_time={end_time}s")
+                    
+                    # Create environments with same parameters for all integrators
+                    envs = {}
+                    n_actions = None
+                    
+                    # First pass to determine number of actions and create environments
+                    env = self.env_manager.create_single_env(
+                        end_time = end_time,
                         fixed_temperature=fixed_temperature,
                         fixed_pressure=fixed_pressure,
                         fixed_phi=fixed_phi,
                         fixed_dt=fixed_dt,
+                        initial_mixture=initial_mixture,
                         randomize=False  # Use fixed parameters
                     )
-                    # Reset environment
-                    obs, _ = envs[action].reset(seed=seed)
-                
-                # Dataset structure:
-                # - observations
-                # - selected_action 
-                # - reward, error, cpu_time, time_reward, error_reward
-                observations = []
-                action_values = []  # Stores reward, error, etc. for each action
-                selected_actions = []
-                timestep = 0
-                done = False
-                
-                # Dataset for filtered observations
-                filtered_obs = []
-                filtered_obs_buffer = np.empty((0, len(obs)))
-                
-                # Run episode using all integrators in parallel and select best at each step
-                while not done and timestep < 10000:  # Safety limit
-                    timestep_results = {}
-                    current_obs = None
-                    any_done = False
+                    n_actions = env.action_space.n
                     
-                    # Run one step with each integrator
+                    # Create one environment per integrator with same parameters
                     for action in range(n_actions):
-                        try:
-                            next_obs, reward, terminated, truncated, info = envs[action].step(
-                                action, timeout=timeout
-                            )
-                            action_done = terminated or truncated
-                            
-                            # Collect metrics for this action
-                            timestep_results[action] = {
-                                'obs': next_obs,
-                                'reward': reward,
-                                'error': info.get('error', float('inf')),
-                                'cpu_time': info.get('cpu_time', float('inf')),
-                                'time_reward': info.get('time_reward', -float('inf')),
-                                'error_reward': info.get('error_reward', -float('inf')),
-                                'done': action_done
-                            }
-                            
-                            # Use any observation as current (they should be same state)
-                            current_obs = next_obs.copy()
-                            
-                            # Check if any environment is done
-                            if action_done:
-                                any_done = True
+                        envs[action] = self.env_manager.create_single_env(
+                            end_time = end_time,
+                            fixed_temperature=fixed_temperature,
+                            fixed_pressure=fixed_pressure,
+                            fixed_phi=fixed_phi,
+                            fixed_dt=fixed_dt,
+                            initial_mixture=initial_mixture,
+                            randomize=False  # Use fixed parameters
+                        )
+                        # Reset environment
+                        obs, _ = envs[action].reset(seed=seed)
+                    
+                    # Dataset structure:
+                    # - observations
+                    # - selected_action 
+                    # - reward, error, cpu_time, time_reward, error_reward
+                    # - fuel_index, phi
+                    observations = []
+                    action_values = []  # Stores reward, error, etc. for each action
+                    selected_actions = []
+                    fuel_indices = []  # Store fuel index for each observation
+                    phis = []  # Store phi values
+                    timestep = 0
+                    done = False
+                    
+                    # Dataset for filtered observations
+                    filtered_obs = []
+                    filtered_obs_buffer = np.empty((0, len(obs)))
+                    timed_out = [False] * n_actions
+                    available_actions = list(range(n_actions))  # Track available actions
+                    
+                    # Track whether the current observation has been obtained
+                    current_obs = None
+                    
+                    # Run episode using all integrators in parallel and select best at each step
+                    while not done and available_actions:  # Continue as long as we have available actions
+                        timestep_results = {}
+                        any_done = False
+                        
+                        # Run one step with each available integrator
+                        for action in available_actions[:]:  # Use a copy of the list for iteration
+                            # Skip if timed out (already handled by removing from available_actions)
+                            try:
+                                next_obs, reward, terminated, truncated, info = envs[action].step(
+                                    action, timeout=timeout
+                                )
                                 
-                        except Exception as e:
-                            if self.verbose:
-                                print(f"Error with action {action} at timestep {timestep}: {e}")
-                            # Mark this action as invalid for this timestep
-                            timestep_results[action] = {
-                                'obs': current_obs if current_obs is not None else None,
-                                'reward': -float('inf'),
-                                'error': float('inf'),
-                                'cpu_time': float('inf'),
-                                'time_reward': -float('inf'),
-                                'error_reward': -float('inf'),
-                                'done': True
-                            }
-                            any_done = True
-                    
-                    # Select best action based on chosen metric
-                    best_action = None
-                    best_value = float('inf') if metric in minimize_metrics else -float('inf')
-                    
-                    for action, result in timestep_results.items():
-                        metric_value = result[metric]
-                        error_value = result['error']
+                                # Check if this action timed out
+                                if info.get('timed_out', False):
+                                    timed_out[action] = True
+                                    print(f"Action {action} timed out at timestep {timestep}")
+                                    # Remove from available actions but continue with others
+                                    available_actions.remove(action)
+                                    continue
+                                
+                                action_done = terminated or truncated
+                                if timestep % 100 == 0:
+                                    if envs[action].features_config['include_phi']:
+                                        print(f"[INIT] timestep: {timestep} - Action {action} done: {action_done} - phi: {envs[action].integrator.gas.equivalence_ratio()} - phi_normalized: {next_obs[1]} - temperature: {envs[action].integrator.gas.T}")
+                                    else:
+                                        print(f"[INIT] timestep: {timestep} - Action {action} done: {action_done} - phi: {envs[action].integrator.gas.equivalence_ratio()} temperature: {envs[action].integrator.gas.T} Error: {info.get('error', float('inf'))} CPU time: {info.get('cpu_time', float('inf'))}")
+                                
+                                # Collect metrics for this action
+                                timestep_results[action] = {
+                                    'obs': next_obs,
+                                    'reward': reward,
+                                    'error': info.get('error', float('inf')),
+                                    'cpu_time': info.get('cpu_time', float('inf')),
+                                    'time_reward': info.get('time_reward', -float('inf')),
+                                    'error_reward': info.get('error_reward', -float('inf')),
+                                    'done': action_done
+                                }
+                                
+                                # Use any observation as current (they should be same state)
+                                current_obs = next_obs.copy()
+                                
+                                # Check if any environment is done
+                                if action_done:
+                                    print(f"Action {action} done at timestep {timestep}")
+                                    any_done = True
+                                    if envs[action].features_config['include_phi']:
+                                        print(f"[FINAL] Action {action} done at timestep {timestep} - final phi: {envs[action].integrator.gas.equivalence_ratio()} - final phi normalized: {next_obs[1]} - final temperature: {envs[action].integrator.gas.T}")
+                                    else:
+                                        print(f"[FINAL] Action {action} done at timestep {timestep} - final phi: {envs[action].integrator.gas.equivalence_ratio()} - final temperature: {envs[action].integrator.gas.T}")
+                                    
+                            except Exception as e:
+                                if self.verbose:
+                                    print(f"Error with action {action} at timestep {timestep}: {e}")
+                                # Mark this action as invalid for this timestep and remove from available actions
+                                timestep_results[action] = {
+                                    'obs': current_obs if current_obs is not None else None,
+                                    'reward': -float('inf'),
+                                    'error': float('inf'),
+                                    'cpu_time': float('inf'),
+                                    'time_reward': -float('inf'),
+                                    'error_reward': -float('inf'),
+                                    'done': True
+                                }
+                                # Remove failed action from available actions
+                                if action in available_actions:
+                                    available_actions.remove(action)
                         
-                        # Skip invalid actions
-                        if (metric in minimize_metrics and metric_value == float('inf')) or \
-                           (metric not in minimize_metrics and metric_value == -float('inf')):
-                            continue
-                            
-                        # Check if better
-                        if metric in minimize_metrics:
-                            if metric_value < best_value:
-                                best_value = metric_value
-                                best_action = action
-                            # Tie-breaking using error when values are close
-                            elif abs(metric_value - best_value) / (abs(best_value) + 1e-10) < 0.05:
-                                if error_value < timestep_results[best_action]['error']:
-                                    best_action = action
-                        else:  # Maximize
-                            if metric_value > best_value:
-                                best_value = metric_value
-                                best_action = action
-                            # Tie-breaking using error when values are close
-                            elif abs(metric_value - best_value) / (abs(best_value) + 1e-10) < 0.05:
-                                if error_value < timestep_results[best_action]['error']:
-                                    best_action = action
-                    
-                    # Store results for this timestep
-                    if best_action is not None and current_obs is not None:
-                        # Only include if observation is significantly different from previous ones
-                        current_obs_reshaped = current_obs.reshape(1, -1)
+                        # Check if we have no more available actions
+                        if not available_actions:
+                            print(f"No available actions left at timestep {timestep}. Ending episode.")
+                            break
                         
-                        if len(filtered_obs_buffer) > 0:
-                            # Calculate distances to previous observations
-                            distances = cdist(current_obs_reshaped, filtered_obs_buffer, 'euclidean')[0]
+                        # Select best action based on chosen metric among available actions
+                        best_action = None
+                        best_value = float('inf') if metric in minimize_metrics else -float('inf')
+                        
+                        for action, result in timestep_results.items():
+                            # Skip actions that have timed out
+                            if timed_out[action]:
+                                continue
+                                
+                            metric_value = result[metric]
+                            error_value = result['error']
                             
-                            # Keep if minimum distance exceeds threshold
-                            if np.min(distances) >= self.distance_threshold:
-                                # Store observation
+                            # Skip invalid actions
+                            if (metric in minimize_metrics and metric_value == float('inf')) or \
+                               (metric not in minimize_metrics and metric_value == -float('inf')):
+                                continue
+                                
+                            # Check if better
+                            if metric in minimize_metrics:
+                                if metric_value < best_value:
+                                    best_value = metric_value
+                                    best_action = action
+                                # Tie-breaking using error when values are close
+                                elif abs(metric_value - best_value) / (abs(best_value) + 1e-10) < 0.05:
+                                    if error_value < timestep_results[best_action]['error']:
+                                        best_action = action
+                            else:  # Maximize
+                                if metric_value > best_value:
+                                    best_value = metric_value
+                                    best_action = action
+                                # Tie-breaking using error when values are close
+                                elif abs(metric_value - best_value) / (abs(best_value) + 1e-10) < 0.05:
+                                    if error_value < timestep_results[best_action]['error']:
+                                        best_action = action
+                        
+                        # Store results for this timestep if we found a valid best action
+                        if best_action is not None and current_obs is not None:
+                            # Only include if observation is significantly different from previous ones
+                            current_obs_reshaped = current_obs.reshape(1, -1)
+                            
+                            if len(filtered_obs_buffer) > 0:
+                                # Calculate distances to previous observations
+                                distances = cdist(current_obs_reshaped, filtered_obs_buffer, 'euclidean')[0]
+                                
+                                # Keep if minimum distance exceeds threshold
+                                if np.min(distances) >= self.distance_threshold:
+                                    # Store observation
+                                    observations.append(current_obs)
+                                    
+                                    # Store selected action
+                                    selected_actions.append(best_action)
+                                    
+                                    # Store fuel index and phi
+                                    fuel_indices.append(fuel_idx)
+                                    phis.append(float(phi))
+                                    
+                                    # Store associated values for the selected action
+                                    result = timestep_results[best_action]
+                                    action_values.append([
+                                        result['reward'],
+                                        result['error'],
+                                        result['cpu_time'],
+                                        result['time_reward'],
+                                        result['error_reward']
+                                    ])
+                                    
+                                    # Update filtered buffer
+                                    filtered_obs_buffer = np.vstack((filtered_obs_buffer, current_obs_reshaped))
+                                    
+                                    # Count selected action
+                                    overall_stats['action_counts'][best_action] = overall_stats['action_counts'].get(best_action, 0) + 1
+                                    overall_stats['fuel_stats'][fuel_name]['action_counts'][best_action] = \
+                                        overall_stats['fuel_stats'][fuel_name]['action_counts'].get(best_action, 0) + 1
+                            else:
+                                # First observation is always kept
                                 observations.append(current_obs)
-                                
-                                # Store selected action
                                 selected_actions.append(best_action)
+                                fuel_indices.append(fuel_idx)
+                                phis.append(float(phi))
                                 
-                                # Store associated values for the selected action
                                 result = timestep_results[best_action]
                                 action_values.append([
                                     result['reward'],
@@ -286,99 +449,102 @@ class IntegratorDataCollector:
                                     result['error_reward']
                                 ])
                                 
-                                # Update filtered buffer
                                 filtered_obs_buffer = np.vstack((filtered_obs_buffer, current_obs_reshaped))
-                                
-                                # Count selected action
                                 overall_stats['action_counts'][best_action] = overall_stats['action_counts'].get(best_action, 0) + 1
-                        else:
-                            # First observation is always kept
-                            observations.append(current_obs)
-                            selected_actions.append(best_action)
-                            
-                            result = timestep_results[best_action]
-                            action_values.append([
-                                result['reward'],
-                                result['error'],
-                                result['cpu_time'],
-                                result['time_reward'],
-                                result['error_reward']
-                            ])
-                            
-                            filtered_obs_buffer = np.vstack((filtered_obs_buffer, current_obs_reshaped))
-                            overall_stats['action_counts'][best_action] = overall_stats['action_counts'].get(best_action, 0) + 1
-                    
-                    # Check if all environments are done
-                    done = any_done
-                    timestep += 1
-                
-                # Episode complete - create combined history
-                if observations:
-                    # Convert lists to numpy arrays
-                    obs_array = np.array(observations)
-                    actions_array = np.array(selected_actions).reshape(-1, 1)
-                    values_array = np.array(action_values)
-                    
-                    # Combine into a single array
-                    # [observation, action, reward, error, cpu_time, time_reward, error_reward]
-                    combined_history = np.concatenate(
-                        [obs_array, actions_array, values_array], 
-                        axis=1
-                    )
-                    
-                    all_combined_history.append(combined_history)
-                    
-                    # Count by action
-                    action_counts = {}
-                    for action in selected_actions:
-                        action_counts[action] = action_counts.get(action, 0) + 1
-                    
-                    # Calculate percentages
-                    total_count = len(selected_actions)
-                    action_percentages = {
-                        action: (count / total_count) * 100 
-                        for action, count in action_counts.items()
-                    }
-                    
-                    # Calculate episode time
-                    episode_time = time.time() - episode_start
-                    overall_stats['computation_time'] += episode_time
-                    
-                    # Update episode stats
-                    episode_stats = {
-                        'episode': episode,
-                        'filtered_observations': len(selected_actions),
-                        'action_counts': action_counts,
-                        'action_percentages': action_percentages,
-                        'episode_time': episode_time,
-                        'temperature': fixed_temperature,
-                        'pressure': fixed_pressure,
-                        'phi': fixed_phi,
-                        'timestep': fixed_dt
-                    }
-                    
-                    overall_stats['episode_stats'].append(episode_stats)
-                    overall_stats['filtered_observations'] += len(selected_actions)
-                    overall_stats['episodes_completed'] += 1
-                    
-                    # Print episode stats
-                    if self.verbose or episode % 5 == 0:
-                        print(f"Episode {episode+1} results ({episode_time:.2f}s):")
-                        print(f"  Filtered observations: {len(selected_actions)}")
+                                overall_stats['fuel_stats'][fuel_name]['action_counts'][best_action] = \
+                                    overall_stats['fuel_stats'][fuel_name]['action_counts'].get(best_action, 0) + 1
                         
-                        # Print action distribution
-                        for action, percentage in action_percentages.items():
-                            action_name = str(envs[action].integrator.action_list[action])
-                            print(f"  {action_name}: {percentage:.1f}%")
+                        # Check if all environments are done
+                        done = any_done
+                        if done:
+                            print(f"Episode {episode+1} completed at timestep {timestep}")
+                            break
+                        timestep += 1
+                    
+                    # Episode complete - create combined history
+                    if observations:
+                        # Convert lists to numpy arrays
+                        obs_array = np.array(observations)
+                        actions_array = np.array(selected_actions).reshape(-1, 1)
+                        values_array = np.array(action_values)
+                        fuel_idx_array = np.array(fuel_indices).reshape(-1, 1)
+                        phi_array = np.array(phis).reshape(-1, 1)
+                        
+                        # Combine into a single array
+                        # [observation, action, reward, error, cpu_time, time_reward, error_reward, fuel_index, phi]
+                        combined_history = np.concatenate(
+                            [obs_array, actions_array, values_array, fuel_idx_array, phi_array], 
+                            axis=1
+                        )
+                        
+                        all_combined_history.append(combined_history)
+                        
+                        # Count by action
+                        action_counts = {}
+                        for action in selected_actions:
+                            action_counts[action] = action_counts.get(action, 0) + 1
+                        
+                        # Calculate percentages
+                        total_count = len(selected_actions)
+                        action_percentages = {
+                            action: (count / total_count) * 100 
+                            for action, count in action_counts.items()
+                        }
+                        
+                        # Calculate episode time
+                        episode_time = time.time() - episode_start
+                        overall_stats['computation_time'] += episode_time
+                        overall_stats['fuel_stats'][fuel_name]['computation_time'] += episode_time
+                        
+                        # Update episode stats
+                        episode_stats = {
+                            'episode': episode,
+                            'fuel': fuel_name,
+                            'filtered_observations': len(selected_actions),
+                            'action_counts': action_counts,
+                            'action_percentages': action_percentages,
+                            'episode_time': episode_time,
+                            'temperature': float(fixed_temperature),
+                            'pressure': float(fixed_pressure),
+                            'phi': float(fixed_phi),
+                            'timestep': fixed_dt
+                        }
+                        
+                        overall_stats['episode_stats'].append(episode_stats)
+                        overall_stats['filtered_observations'] += len(selected_actions)
+                        overall_stats['episodes_completed'] += 1
+                        
+                        # Update fuel-specific stats
+                        overall_stats['fuel_stats'][fuel_name]['episodes'] += 1
+                        overall_stats['fuel_stats'][fuel_name]['observations'] += len(observations)
+                        overall_stats['fuel_stats'][fuel_name]['filtered_observations'] += len(selected_actions)
+                        
+                        # Print episode stats
+                        if self.verbose or episode % 5 == 0:
+                            print(f"Episode {episode+1} results ({episode_time:.2f}s):")
+                            print(f"  Fuel: {fuel_name}")
+                            print(f"  Filtered observations: {len(selected_actions)}")
+                            
+                            # Print action distribution
+                            for action, percentage in action_percentages.items():
+                                action_name = str(envs[action].integrator.action_list[action])
+                                print(f"  {action_name}: {percentage:.1f}%")
+                    
+                    # Close environments
+                    for env in envs.values():
+                        env.close()
                 
-                # Close environments
-                for env in envs.values():
-                    env.close()
-            
-            except Exception as e:
-                print(f"Error in episode {episode+1}: {e}")
-                import traceback
-                traceback.print_exc()
+                except Exception as e:
+                    print(f"Error in episode {episode+1} for fuel {fuel_name}: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+                # save data every 50 episodes
+                if episode % 50 == 0 and episode > 0:
+                    if output_dir is not None:
+                        self.save_dataset(all_combined_history, f"{output_dir}/pretraining_dataset_{episode}.npy")
+                    else:
+                        self.save_dataset(all_combined_history, f"pretraining_dataset_{episode}.npy")
         
         # Calculate final statistics
         elapsed_time = time.time() - start_time
@@ -389,6 +555,15 @@ class IntegratorDataCollector:
                 action: (count / total_counts) * 100 
                 for action, count in overall_stats['action_counts'].items()
             }
+        
+        # Calculate fuel-specific percentages
+        for fuel_name in overall_stats['fuel_stats']:
+            fuel_total = sum(overall_stats['fuel_stats'][fuel_name]['action_counts'].values())
+            if fuel_total > 0:
+                overall_stats['fuel_stats'][fuel_name]['action_percentages'] = {
+                    action: (count / fuel_total) * 100
+                    for action, count in overall_stats['fuel_stats'][fuel_name]['action_counts'].items()
+                }
         
         overall_stats['total_observations'] = sum(len(h) for h in all_combined_history)
         overall_stats['collection_time'] = elapsed_time
@@ -405,6 +580,18 @@ class IntegratorDataCollector:
             print("\nOverall action distribution:")
             for action, percentage in overall_stats.get('action_percentages', {}).items():
                 print(f"  Action {action}: {percentage:.1f}%")
+            
+            # Print fuel-specific statistics
+            for fuel_name, stats in overall_stats['fuel_stats'].items():
+                print(f"\nFuel: {fuel_name}")
+                print(f"  Episodes: {stats['episodes']}")
+                print(f"  Observations: {stats['observations']}")
+                print(f"  Filtered observations: {stats['filtered_observations']}")
+                
+                if 'action_percentages' in stats:
+                    print("  Action distribution:")
+                    for action, percentage in stats['action_percentages'].items():
+                        print(f"    Action {action}: {percentage:.1f}%")
             
             print(f"\nTotal time: {elapsed_time:.1f}s (computation: {overall_stats['computation_time']:.1f}s)")
             print(f"Processing speed: {overall_stats['observations_per_second']:.1f} obs/sec")
@@ -437,6 +624,7 @@ class IntegratorDataCollector:
         return dataset
 
 
+
 class IntegratorDataset(Dataset):
     """Dataset for pretraining the PPO actor using optimal integrator choices."""
     
@@ -445,15 +633,20 @@ class IntegratorDataset(Dataset):
         Initialize dataset from collected optimal integrator data.
         
         Args:
-            data: Combined history data with structure [obs, action, reward, error, cpu_time, time_reward, error_reward]
+            data: Combined history data with structure [obs, action, reward, error, cpu_time, time_reward, error_reward, fuel_index, phi]
             obs_dim: Dimension of the observation space
         """
         self.data = data
         self.obs_dim = obs_dim
         
-        # Extract observations and actions from the combined data
+        # Extract observations, actions, fuel indices, and phis from the combined data
         self.states = data[:, :obs_dim].astype(np.float32)
         self.actions = data[:, obs_dim].astype(np.int64)
+        
+        # Extract additional features: fuel_index and phi
+        # Assuming fuel_index is at position obs_dim + 6 (after the 5 metrics)
+        # and phi is at position obs_dim + 7
+        self.fuel_indices = data[:, obs_dim + 6].astype(np.int64)
         
         # Calculate action distribution
         unique_actions, counts = np.unique(self.actions, return_counts=True)
@@ -462,6 +655,13 @@ class IntegratorDataset(Dataset):
         print("Action distribution in dataset:")
         for action, count in zip(unique_actions, counts):
             print(f"  Action {int(action)}: {count} samples ({100 * count / total:.2f}%)")
+        
+        # Calculate fuel distribution
+        unique_fuels, fuel_counts = np.unique(self.fuel_indices, return_counts=True)
+        
+        print("\nFuel distribution in dataset:")
+        for fuel_idx, count in zip(unique_fuels, fuel_counts):
+            print(f"  Fuel index {int(fuel_idx)}: {count} samples ({100 * count / total:.2f}%)")
     
     def __len__(self):
         return len(self.states)
@@ -666,8 +866,18 @@ class Evaluator:
         integrator_metrics = {}
         
         print(f"Evaluating pretrained policy for {num_episodes} episodes...")
-        
+
+        fuel_options = ['methane', 'n-dodecane', 'octane']
+
+
         for episode in range(num_episodes):
+            fuel_selected = np.random.choice(fuel_options)
+            mech_file = FUEL_MECHANISMS.get(fuel_selected)
+            fuel_species = FUEL_SPECIES.get(fuel_selected)
+            self.env_manager.args.mech_file = mech_file
+            self.env_manager.args.fuel = fuel_species
+            print(f"Using fuel: {fuel_species} from mechanism: {mech_file}")
+            
             env = self.env_manager.create_single_env()
             
             # Initialize tracking for this episode
@@ -1043,17 +1253,17 @@ def setup_argparse():
     
     # Data collection arguments
     parser.add_argument('--collect_data', action='store_true', help='Collect new training data')
-    parser.add_argument('--num_episodes', type=int, default=200, help='Number of episodes for data collection')
+    parser.add_argument('--num_episodes', type=int, default=50, help='Number of episodes for data collection')
     parser.add_argument('--distance_threshold', type=float, default=0.001, help='Threshold for filtering similar observations')
     parser.add_argument('--metric', type=str, default='reward', choices=['reward', 'error', 'cpu_time', 'time_reward', 'error_reward'], 
                         help='Metric for selecting optimal integrator')
-    parser.add_argument('--timeout', type=float, default=0.3, help='Timeout for integration steps')
+    parser.add_argument('--timeout', type=float, default=1, help='Timeout for integration steps')
     
     # Training arguments
     parser.add_argument('--batch_size', type=int, default=64, help='Batch size for training')
-    parser.add_argument('--epochs', type=int, default=50, help='Maximum number of training epochs')
-    parser.add_argument('--learning_rate', type=float, default=3e-4, help='Learning rate')
-    parser.add_argument('--patience', type=int, default=7, help='Patience for early stopping')
+    parser.add_argument('--epochs', type=int, default=100, help='Maximum number of training epochs')
+    parser.add_argument('--learning_rate', type=float, default=5e-4, help='Learning rate')
+    parser.add_argument('--patience', type=int, default=10, help='Patience for early stopping')
     parser.add_argument('--test_size', type=float, default=0.2, help='Fraction of dataset to use for testing')
     
     # Evaluation arguments
@@ -1104,6 +1314,9 @@ def main():
     env = env_manager.create_single_env()
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.n
+
+    print(f"State dimension: {state_dim}")
+    print(f"Action dimension: {action_dim}")
     
     # Initialize PPO agent
     agent = PPO(
@@ -1128,11 +1341,14 @@ def main():
             distance_threshold=args.distance_threshold,
             verbose=True
         )
+
+        all_fuel_data = load_fuel_data(FUEL_DATA_PATHS)
         
-        collected_data, collection_stats = data_collector.collect_optimal_data(
+        collected_data, collection_stats = data_collector.collect_optimal_data(all_fuel_data=all_fuel_data,
             num_episodes=args.num_episodes,
             metric=args.metric,
-            timeout=args.timeout
+            timeout=args.timeout,
+            output_dir=output_dir
         )
         
         # Save collection statistics
@@ -1152,11 +1368,11 @@ def main():
             
             json.dump(serializable_stats, f, indent=4)
         
-        # Plot collection statistics
-        Visualizer.plot_data_collection_stats(
-            collection_stats,
-            save_path=os.path.join(plot_dir, 'data_collection_stats.png')
-        )
+        # # Plot collection statistics
+        # Visualizer.plot_data_collection_stats(
+        #     collection_stats,
+        #     save_path=os.path.join(plot_dir, 'data_collection_stats.png')
+        # )
         
         # Concatenate and save all collected data
         if collected_data:
@@ -1193,6 +1409,10 @@ def main():
         stratify=dataset.actions,  # Stratify to maintain class distribution
         random_state=42
     )
+
+    # print shape of train_indices and test_indices
+    print(f"Train indices shape: {train_indices.shape}")
+    print(f"Test indices shape: {test_indices.shape}")
     
     train_dataset = torch.utils.data.Subset(dataset, train_indices)
     test_dataset = torch.utils.data.Subset(dataset, test_indices)

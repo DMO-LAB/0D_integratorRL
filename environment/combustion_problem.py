@@ -20,8 +20,8 @@ def setup_problem(temperature_range: np.ndarray, pressure_range: np.ndarray, phi
                   reference_rtol: float = 1e-10,
                   reference_atol: float = 1e-20,
                   state_change_threshold: float = 1,
-                  min_time_steps_range: Tuple[int, int] = (1e-6, 1e-5),
-                  max_time_steps_range: Tuple[int, int] = (1e-4, 1e-3),
+                  min_time_steps_range: Tuple[int, int] = (1e-5, 1e-5),
+                  max_time_steps_range: Tuple[int, int] = (1e-5, 1e-5),
                   randomize: bool = True,
                   verbose: bool = True,
                   fixed_temperature = None,
@@ -49,14 +49,14 @@ def setup_problem(temperature_range: np.ndarray, pressure_range: np.ndarray, phi
         else:
             phi = fixed_phi
             
-    if temperature <= 1000:
+    if temperature <= 900:
         timestep = np.random.choice(max_time_steps_range) if randomize else fixed_dt
-        end_time = 0.05 if randomize else end_time
+        end_time = 0.01 if randomize else end_time
     else:
         timestep = np.random.choice(min_time_steps_range) if randomize else fixed_dt
         end_time = end_time
 
-    
+    # print(f"initial_mixture in setup_problem: {initial_mixture}")
     return CombustionProblem(mech_file=mech_file,
                             temperature=temperature,
                             pressure=pressure * ct.one_atm,
@@ -96,7 +96,7 @@ class CombustionProblem:
         try:
             self.mech_file = mech_file
             self.temperature = temperature
-            self.pressure = pressure
+            self.pressure = ct.one_atm
             self.phi = phi
             self.fuel = fuel
             self.oxidizer = oxidizer
@@ -109,16 +109,30 @@ class CombustionProblem:
             self.verbose = verbose
             # Initialize Cantera solution
             self.gas = ct.Solution(self.mech_file)
-            
-            # Set up mixture
+
+            # get the species index of the fuel
+            self.fuel_index = self.gas.species_index(self.fuel)
+            self.oxidizer_index = self.gas.species_index('o2') if 'o2' in self.gas.species_names else self.gas.species_index('O2')
+                        # Set up mixture
             if initial_mixture is None:
                 self.initial_mixture = f"{self.fuel}:1, {self.oxidizer}"
+                self.gas.TPX = self.temperature, self.pressure, self.initial_mixture
+                # print(f"Sucessfully set up problem with phi: {self.phi} and temperature: {self.temperature} - fuel composition: {self.gas.Y[self.fuel_index]} - oxidizer composition: {self.gas.Y[self.oxidizer_index]}")
             else:
                 self.initial_mixture = initial_mixture
-            
+                #print(f"fuel_composition initial: {self.initial_mixture[self.fuel]}, oxidizer_composition initial: {self.initial_mixture['o2']}")
+                
+                self.gas.TP = self.temperature, ct.one_atm
+                self.gas.set_equivalence_ratio(self.phi, self.fuel, self.oxidizer)
+
+           
+            # calculate the phi of the initial mixture
             self.gas.set_equivalence_ratio(self.phi, self.fuel, self.oxidizer)
-            self.gas.TPX = self.temperature, self.pressure, self.initial_mixture
-        
+            self.phi = self.gas.equivalence_ratio()
+
+            fuel_composition = self.gas.Y[self.fuel_index]
+            oxidizer_composition = self.gas.Y[self.oxidizer_index]
+            print(f"Sucessfully set up problem with phi: {self.phi} and temperature: {self.temperature} - fuel composition: {fuel_composition} - oxidizer composition: {oxidizer_composition}")        
             # Set default species to track if none provided
             if species_to_track is None:
                 self.species_to_track = ['H2', 'O2', 'H', 'OH', 'H2O', 'HO2', 'H2O2']
@@ -133,7 +147,7 @@ class CombustionProblem:
             self.reference_solution = None
             self.current_state = CombustionStage.PREIGNITION
             if self.verbose:
-                print(f"Combustion problem initialized with T={self.temperature}, P={self.pressure}, phi={self.phi} and timestep={self.timestep}")
+                print(f"Combustion problem initialized with T={self.temperature}, P={self.pressure}, phi={self.phi} and timestep={self.timestep} - end time: {self.end_time}")
             self._compute_reference_solution()
         except Exception as e:
             print(f"Error setting up problem: {e}")
@@ -181,17 +195,18 @@ class CombustionProblem:
             state_changed, state_change = self._state_changed_significantly(previous_state, reactor.thermo.state)
             stage_changes.append(state_changed)
             #print(f"State changed: {state_changed} at step {i} with change {state_change:.6e} and temperature {reactor.T:.4e} K, stage {self.current_state}")
-            if stage_changes[-1] != stage_changes[-2]:
+            if stage_changes[-1] != stage_changes[-2] and temperatures[-1] > temperatures[-2]:
                 if self.current_state == CombustionStage.PREIGNITION:
                     stage_steps[self.current_state] = i
                     self.current_state = CombustionStage.IGNITION
+                    print(f"Ignition stage started at step {i}")
                     self.ignition_delay = i * self.timestep
                 elif self.current_state == CombustionStage.IGNITION:
                     stage_steps[self.current_state] = i
                     self.current_state = CombustionStage.POSTIGNITION 
             if self.current_state == CombustionStage.POSTIGNITION:
                 # stop the simulation after 2 * ignition steps
-                if i > 4 * stage_steps[CombustionStage.IGNITION]:
+                if i > 1.5 * stage_steps[CombustionStage.IGNITION]:
                     self.completed_steps = i
                     print(f"Postignition stage completed at step {i}")
                     break # stop the simulation after postignition

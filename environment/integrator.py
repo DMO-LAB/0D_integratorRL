@@ -54,7 +54,7 @@ class ChemicalIntegrator:
         
         self.gas = problem.gas
         self.timestep = problem.timestep
-        self.P0 = problem.pressure
+        self.P0 = ct.one_atm
         self.state_change_threshold = problem.state_change_threshold
         
         self.reset_history()
@@ -79,13 +79,9 @@ class ChemicalIntegrator:
         self.current_stage = CombustionStage.PREIGNITION
         self.t = 0.0
         self.temperature_queue = deque(maxlen=10)
-        # Reset gas state using equivalence ratio
-        self.gas.set_equivalence_ratio(
-            self.problem.phi, 
-            self.problem.fuel, 
-            self.problem.oxidizer
-        )
-        self.gas.TPX = self.problem.temperature, self.P0, self.problem.initial_mixture
+    
+        self.gas.TP = self.problem.temperature, ct.one_atm
+        self.gas.set_equivalence_ratio(self.problem.phi, self.problem.fuel, self.problem.oxidizer)
         self.y = np.hstack([self.gas.T, self.gas.Y])
         
         self._store_state(self.y, 0.0, None, True, 0.0, 0.0, self.current_stage, 0.0)
@@ -93,6 +89,7 @@ class ChemicalIntegrator:
         self.stage_steps = {stage.value: 0 for stage in CombustionStage}
         self.stage_cpu_times = {stage.value: 0.0 for stage in CombustionStage}
         self.end_simulation = False
+        self.previous_temperature = self.problem.temperature
         
     def dydt(self, t: float, y: np.ndarray) -> np.ndarray:
         """Compute derivatives for the chemical system."""
@@ -100,7 +97,7 @@ class ChemicalIntegrator:
             T = y[0]
             Y = y[1:]
             
-            self.gas.TPY = T, self.P0, Y
+            self.gas.TPY = T, ct.one_atm, Y
             rho = self.gas.density_mass
             wdot = self.gas.net_production_rates
             cp = self.gas.cp_mass
@@ -252,7 +249,7 @@ class ChemicalIntegrator:
                                 self.current_stage, stage_value)
                 self.stage_changes.append(stage_change)
 
-                if self.stage_changes[-1] != self.stage_changes[-2]:
+                if self.stage_changes[-1] != self.stage_changes[-2] and self.history['temperatures'][-1] > self.previous_temperature:
                     if self.current_stage == CombustionStage.PREIGNITION:
                         self.stage_steps[self.current_stage.value] = self.step_count
                         self.stage_cpu_times[self.current_stage.value] += np.sum(self.history['cpu_times'])
@@ -277,12 +274,14 @@ class ChemicalIntegrator:
                     self.end_simulation = True
                     self.stage_cpu_times[self.current_stage.value] += np.sum(self.history['cpu_times']) - self.stage_cpu_times[CombustionStage.IGNITION.value] - self.stage_cpu_times[CombustionStage.PREIGNITION.value]
             
+            
             result.update({
                 'current_stage': self.current_stage,
                 'end_simulation': self.end_simulation,
                 'stage_cpu_times': self.stage_cpu_times,
                 'timed_out': False
             })
+            self.previous_temperature = self.history['temperatures'][-1]
             return result
             
         except queue.Empty:
