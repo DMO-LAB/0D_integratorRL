@@ -8,7 +8,7 @@ class Args:
     seed: int = np.random.randint(0, 1000000)
     torch_deterministic: bool = True
     cuda: bool = True
-    track: bool = False
+    track: bool = True
     wandb_project_name: str = "combustion_control"
     wandb_entity: Optional[str] = None
     capture_video: bool = False
@@ -115,7 +115,7 @@ class Args:
         import numpy as np
         
         # Create numpy arrays from range parameters
-        self.temperature_range = np.linspace(self.temp_min, self.temp_max, 11)  # Initial temperature range
+        self.temperature_range = np.linspace(self.temp_min, self.temp_max, 21)  # Initial temperature range
         self.pressure_range = np.array([self.press_min])  # Pressure in atm
         self.phi_range = np.linspace(self.phi_min, self.phi_max, 51)  # Equivalence ratio
         
