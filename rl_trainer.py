@@ -82,9 +82,15 @@ class Trainer:
         
         # Store the previous observation for L2 norm comparison
         previous_obs = observation.copy()
+        previous_temperature = self.env_manager.env.integrator.y[0].copy()
+
+        previous_Y = np.array([
+            self.env_manager.env.integrator.y[self.env_manager.env.integrator.gas.species_index(spec) + 1]
+            for spec in self.env_manager.env.species_to_track
+        ])
         
         # L2 norm threshold for filtering observations (adjust as needed)
-        l2_threshold = 0.05  # Minimum change required to consider a state different enough
+        l2_threshold = 0.1  # Minimum change required to consider a state different enough
         
         # Buffer for storing experiences that need to be filtered
         temp_buffer = {
@@ -122,7 +128,7 @@ class Trainer:
             # Execute environment step
             next_observation, rewards, terminateds, truncateds, infos = self.env_manager.env.step(action_item, timeout=self.args.timeout)
             dones = np.logical_or(terminateds, truncateds)
-            
+            #print(f"[{counter}] - TRAINING] Observation: {next_observation} - Rewards: {rewards} - Terminated: {terminateds} - Truncated: {truncateds} - Done: {dones}")
             if dones:
                 print(f"[TRAINING] Terminated or truncated at step {self.env_manager.env.current_step} and global step {self.global_step}")
                 print(f"[TRAINING] Action distribution: {self.env_manager.env.action_distribution}")
@@ -138,7 +144,8 @@ class Trainer:
             # Determine whether to store the current experience
             if current_stage.value == CombustionStage.PREIGNITION.value:
                 # In pre-ignition: Only store if there's significant change OR it's a regular sample
-                should_store = significant_change or not should_skip
+                should_store = significant_change #or not should_skip
+                
             else:
                 # In ignition/post-ignition: Always store
                 should_store = True
@@ -148,6 +155,14 @@ class Trainer:
                 should_store = True
             
             if should_store:
+                # print the before and after obs
+                print(f"Counter: {counter} - L2 norm: {l2_norm:.4f} - significant change: {significant_change} - current stage: {current_stage.value} \n previous temperature: {previous_temperature} - current temperature: {self.env_manager.env.integrator.y[0]}")
+                current_Y = np.array([
+                    self.env_manager.env.integrator.y[self.env_manager.env.integrator.gas.species_index(spec) + 1]
+                    for spec in self.env_manager.env.species_to_track
+                ])
+                print(f"Action taken: {action_item} - Rewards: {rewards} - cpu time: {infos['cpu_time']} - error: {infos['error']}")
+                # print(f"Previous Y: {previous_Y} - Current Y: {current_Y}")
                 # Store experiences directly in the PPO buffer
                 self.agent.buffer.states.append(state)
                 self.agent.buffer.actions.append(action)
@@ -188,6 +203,11 @@ class Trainer:
             # Always update observation (even when skipping)
             previous_obs = next_observation.copy()
             observation = next_observation
+            previous_temperature = self.env_manager.env.integrator.y[0].copy()
+            previous_Y = np.array([
+            self.env_manager.env.integrator.y[self.env_manager.env.integrator.gas.species_index(spec) + 1]
+            for spec in self.env_manager.env.species_to_track
+        ])
             counter += 1
             
         action_selected = np.array(action_selected)
@@ -212,11 +232,13 @@ class Trainer:
             self.episodes_completed += 1
             # Check if we should update
             if len(self.agent.buffer.rewards) >= self.args.batch_size:
+                print(f"[TRAINING] Performing PPO update at iteration {self.global_step} - with {len(self.agent.buffer.rewards)} rewards and buffer size {len(self.agent.buffer.states)}")
                 # Perform PPO update
                 self.agent.update()
                 
                 # Clear buffers
                 self.agent.buffer.clear()
+                print(f"[TRAINING] Buffer cleared at iteration {self.global_step} - with {len(self.agent.buffer.rewards)} rewards and buffer size {len(self.agent.buffer.states)}")
                 
             next_obs, _ = self.env_manager.env.reset()
         return next_obs

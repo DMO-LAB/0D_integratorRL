@@ -66,6 +66,11 @@ def run_episode(agent, env, default_action: Optional[int] = None, device: torch.
         else:
             print(f"Episode failed - {info}")
     
+    try:
+        print(f"Total reward: {total_reward:.2f} - Total error: {total_error:.4f} - Total time: {total_time:.2f} - Total time reward: {total_time_reward:.2f} - Total error reward: {total_error_reward:.2f}")
+    except Exception as e:
+        pass
+    
     if default_action is None:
         print(f"[EVALUATION] RL POLICY EVALUATION - Reward: {total_reward:.2f} - CPU Time: {total_time:.2f} - Error: {total_error:.4f}")
         print(f"[EVALUATION] Action Distribution: {env.action_distribution}")

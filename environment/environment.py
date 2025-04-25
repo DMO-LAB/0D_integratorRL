@@ -225,17 +225,17 @@ class CombustionEnv(gym.Env):
         # Combine all features
         observation = np.concatenate(observation_parts)
         
-        # Add small Gaussian noise to observation to help generalization
-        # Scale noise based on the stage - less noise in critical stages
-        if self.integrator.current_stage == CombustionStage.PREIGNITION:
-            noise_scale = 0.01  # More noise in pre-ignition
-        elif self.integrator.current_stage == CombustionStage.IGNITION:
-            noise_scale = 0.003  # Less noise in ignition (critical stage)
-        else:  # POSTIGNITION
-            noise_scale = 0.005  # Medium noise in post-ignition
+        # # Add small Gaussian noise to observation to help generalization
+        # # Scale noise based on the stage - less noise in critical stages
+        # if self.integrator.current_stage == CombustionStage.PREIGNITION:
+        #     noise_scale = 0.01  # More noise in pre-ignition
+        # elif self.integrator.current_stage == CombustionStage.IGNITION:
+        #     noise_scale = 0.003  # Less noise in ignition (critical stage)
+        # else:  # POSTIGNITION
+        #     noise_scale = 0.005  # Medium noise in post-ignition
             
-        noise = np.random.normal(0, noise_scale, observation.shape)
-        observation = observation + noise
+        # noise = np.random.normal(0, noise_scale, observation.shape)
+        # observation = observation + noise
         
         return observation.astype(np.float32)
     def calculate_equivalence_ratio_mass(self, gas, fuel_species, oxidizer_species="O2"):
@@ -331,7 +331,8 @@ class CombustionEnv(gym.Env):
             self.integrator.y[self.integrator.gas.species_index(spec) + 1]
             for spec in self.species_to_track
         ])
-        Y_normalized = np.clip(Y, 1e-20, None)
+
+        Y_normalized = np.clip(np.abs(Y), 1e-20, None)
         Y_normalized = np.log10(Y_normalized) / 20 
         if self.features_config['include_phi']:
             return np.concatenate([[T_normalized,phi_normalized], Y_normalized])

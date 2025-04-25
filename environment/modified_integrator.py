@@ -89,6 +89,7 @@ class IntegratorFactory:
         Returns:
             Integrator object
         """
+        #print(f"********************************* Method name: {method}******************************************")
         # Make sure y0 is a numpy array
         y0 = np.asarray(y0, dtype=float)
         
@@ -142,9 +143,9 @@ class IntegratorFactory:
             if jacobian_func is not None and iter_type == sundials_py.cvode.IterationType.NEWTON:
                 solver.set_jacobian(jacobian_func)
                 
-            # # Set maximum number of steps to a reasonable value
-            if cvode_method.upper() != 'BDF':
-                solver.set_max_num_steps(100000)
+            # # # Set maximum number of steps to a reasonable value
+            # if cvode_method.upper() != 'BDF':
+            #     solver.set_max_num_steps(100000)
             
             return solver
         
@@ -206,6 +207,7 @@ class IntegratorFactory:
         
         # Use SciPy's ODE solver as fallback
         else:
+            #print(f"********************************* OTHRTNMethod name: {method}******************************************")
             try:
                 from scipy.integrate import ode
                 
@@ -226,6 +228,7 @@ class IntegratorFactory:
     
     @staticmethod
     def _get_butcher_table(method_name):
+        #print(f"********************************* Method name: {method_name}******************************************")
         """Map method name to appropriate Butcher table enum."""
         if not SUNDIALS_AVAILABLE:
             return None
@@ -361,6 +364,8 @@ class IntegratorFactory:
                 'message': 'Success' if integrator.successful() else 'Integration failed'
             }
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return {
                 'success': False,
                 'message': f"Integration error: {str(e)}"

@@ -8,7 +8,7 @@ class Args:
     seed: int = np.random.randint(0, 1000000)
     torch_deterministic: bool = True
     cuda: bool = True
-    track: bool = True
+    track: bool = False
     wandb_project_name: str = "combustion_control"
     wandb_entity: Optional[str] = None
     capture_video: bool = False
@@ -37,44 +37,66 @@ class Args:
     
     # Training cycle parameters
     total_timesteps: int = 1000000
-    env_reset_frequency: int = 2  # Reset environment every N iterations
+    env_reset_frequency: int = 1  # Reset environment every N iterations
     save_frequency: int = 50        # Save checkpoint every N iterations
     eval_frequency: int = 10       # Run evaluation every N iterations
     num_eval_episodes: int = 1    # Number of episodes to run during evaluation
     
     # Problem setup parameters
-    mech_file: str = "mechanism_files/ch4_53species.yaml"
-    fuel: str = "CH4"
+    mech_file: str = "/home/elo/ubunu_codes/SCI-ML/0D_integratorRL/large_mechanism/large_mechanism/n-dodecane.yaml"
+    fuel: str = "nc12h26"
     species_to_track: List[str] = field(default_factory=lambda: ['H2', 'O2', 'H', 'OH', 'H2O', 'HO2', 'H2O2'])
     
     # Temperature, pressure, and phi ranges
-    temp_min: float = 300.0
-    temp_max: float = 1500.0
+    temp_min: float = 900.0
+    temp_max: float = 1300.0
     temp_step: float = 50.0
     
     press_min: float = 1.0
     press_max: float = 1.0
     press_step: float = 1
     
-    phi_min: float = 0.0
-    phi_max: float = 10
+    phi_min: float = 0.1
+    phi_max: float = 5
     phi_step: float = 1.0
     
     timeout: float = 5
     
     # Time stepping parameters
-    end_time: float = 0.1  # s
+    end_time: float = 0.2  # s
     min_time_steps_range: Tuple[float, float] = (1e-5, 1e-5)
     max_time_steps_range: Tuple[float, float] = (1e-5, 1e-4)
     
     # Integration parameters 
     reference_rtol: float = 1e-10
     reference_atol: float = 1e-20
-    # integrator_list: List[str] = field(default_factory=lambda: ['ARKODE_HEUN_EULER', 'ARKODE_ZONNEVELD', 
-    #                                                            'CVODE_BDF', 'ARKODE_KVAERNO_4_2_3',
-    #                                                              'ARKODE_SDIRK_5_3_4'])
-    integrator_list: List[str] = field(default_factory=lambda: ['ARKODE_HEUN_EULER', 
-                                                               'CVODE_BDF', 'ARKODE_KVAERNO_4_2_3'])
+#     top_integrators = ['CVODE_BDF',
+# 'ARKODE_HEUN_EULER',
+# 'ARKODE_BOGACKI',
+# 'ARKODE_FEHLBERG_13_7_8',
+# 'ARKODE_ARK548L2SA_ERK',  
+# 'ARKODE_VERNER_8_5_6',
+# 'ARKODE_ARK436L2SA_ERK',
+# 'ARKODE_ARK437L2SA_ERK',
+# 'ARKODE_ZONNEVELD',
+# 'ARKODE_ARK324L2SA_ERK']
+    # integrator_list: List[str] = field(default_factory=lambda: ['CPP_RK23', 'ARKODE_HEUN_EULER', 'ARKODE_ZONNEVELD', 
+    #                                                            'ARKODE_BOGACKI', 'ARKODE_ARK324L2SA_ERK', 'ARKODE_ARK436L2SA_ERK',
+    #                                                            'ARKODE_ARK437L2SA_ERK', 'ARKODE_ARK548L2SA_ERK',
+    #                                                            'ARKODE_VERNER_8_5_6', 'ARKODE_FEHLBERG_13_7_8',
+    #                                                            'CVODE_BDF', 
+    #                                                            'ARKODE_SDIRK_2_1_2', 'ARKODE_KVAERNO_4_2_3','ARKODE_SDIRK_5_3_4',
+    #                                                            'ARKODE_BILLINGTON_3_3_2', 'ARKODE_TRBDF2_3_3_2', 'ARKODE_ARK324L2SA_DIRK_4_2_3',
+    #                                                            'ARKODE_CASH_5_2_4', 'ARKODE_CASH_5_3_4', 'ARKODE_ARK436L2SA_DIRK_6_3_4',
+    #                                                            'ARKODE_ARK437L2SA_DIRK_7_3_4', 'ARKODE_ARK548L2SA_DIRK_8_4_5', 'ARKODE_KVAERNO_7_4_5'])
+    
+    integrator_list: List[str] = field(default_factory=lambda: ['CPP_RK23', 'ARKODE_HEUN_EULER', 
+                                                               'ARKODE_BOGACKI', 'ARKODE_ARK324L2SA_ERK', 
+                                                               'CVODE_BDF', 'BDF', 
+                                                               'ARKODE_BILLINGTON_3_3_2',
+                                                               'ARKODE_ARK437L2SA_DIRK_7_3_4', ])
+    # integrator_list: List[str] = field(default_factory=lambda: ['ARKODE_HEUN_EULER', 'CVODE_BDF',
+    #                                                             'ARKODE_KVAERNO_4_2_3'])
     tolerance_list: List[Tuple[float, float]] = field(
         default_factory=lambda: [(1e-6, 1e-8)]
     )
@@ -84,7 +106,7 @@ class Args:
         'temporal_features': False,
         'species_features': False,
         'basic_features': True,
-        'include_phi': False,
+        'include_phi': True,
         'window_size': 5,
         'epsilon': 1e-10,
         'include_stage': False,

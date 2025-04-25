@@ -73,7 +73,7 @@ class EnvManager:
         return SyncVectorEnv([make_env(self.args, i) for i in range(self.args.num_envs)])
     
     
-    def create_single_env(self, end_time: float = 1e-1, fixed_temperature: float = None, fixed_pressure: float = None, fixed_phi: float = None, fixed_dt: float = None, randomize: bool = True, initial_mixture: str = None):
+    def create_single_env(self, end_time: float = 2e-1, fixed_temperature: float = None, fixed_pressure: float = None, fixed_phi: float = None, fixed_dt: float = None, randomize: bool = True, initial_mixture: str = None):
         """Create a single environment."""
         if randomize:
             print(f"Creating a single environment with random parameters")
