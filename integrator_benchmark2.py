@@ -200,12 +200,13 @@ class IntegratorBenchmark:
             # Take a step with each action
             for i, (method, rtol, atol) in enumerate(self.action_list):
                 action_name = f"{method}_{rtol}_{atol}"
-                if actions_dones[i] == True:
-                    print(f"Skipping environment {i} ({action_name}) because it terminated at step {step}")
-                    raise Exception(f"Environment {i} ({action_name}) terminated at step {step}")
+                
                 
                 # Take a step
                 try:
+                    if actions_dones[i]:
+                        print(f"Skipping environment {i} ({action_name}) because it terminated at step {step}")
+                        raise 
                     env = self.envs[i]
                     obs, reward, terminated, truncated, info = env.step(i, timeout=self.timeout)  # Action 0 corresponds to the only method for this env
                     
@@ -244,7 +245,7 @@ class IntegratorBenchmark:
                 except Exception as e:
                     # import traceback
                     # traceback.print_exc()
-                    print(f"Exception raise for environment {i} ({action_name}) at step {step} - {e}")
+                    #print(f"Exception raise for environment {i} ({action_name}) at step {step} - {e}")
                     results[f"{action_name}_cpu_time"].append(float('inf'))
                     results[f"{action_name}_error"].append(float('inf'))
                     results[f"{action_name}_reward"].append(float('-inf'))
