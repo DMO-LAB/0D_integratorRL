@@ -15,3 +15,5 @@ integrator_comparison/
 notebooks/
 *.npz
 *.npy
+*.txt
+*.pyc
