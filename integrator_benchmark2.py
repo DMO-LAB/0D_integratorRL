@@ -214,8 +214,9 @@ class IntegratorBenchmark:
                     cpu_time = info.get('cpu_time', float('inf'))
                     error = info.get('error', float('inf'))
                     success = info.get('success', False)
+                
 
-                    #print(f"Action {i} ({action_name}) - cpu_time: {cpu_time:.6f} - error: {error:.6e} - reward: {reward:.4f} - success: {success}")
+                    print(f"Action {i} ({action_name}) - cpu_time: {cpu_time:.6f} - error: {error:.6e} - reward: {reward:.4f} - success: {success} - Temperature: {env.integrator.y[0]:.6f}")
                     
                     results[f"{action_name}_cpu_time"].append(cpu_time)
                     results[f"{action_name}_error"].append(error)

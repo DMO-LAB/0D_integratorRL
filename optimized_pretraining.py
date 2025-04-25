@@ -68,7 +68,7 @@ def load_fuel_data(fuel_data_paths):
 
 # Dictionary mapping fuel names to their mechanism files
 FUEL_MECHANISMS = {
-    'n-dodecane': '/home/elo/CODES/SCI-ML/RLIntegratorSelector/large_mechanism/large_mechanism/n-dodecane.yaml',
+    'n-dodecane': '/home/elo/ubuntu_codes/SCI-ML/RLIntegratorSelector/large_mechanism/large_mechanism/n-dodecane.yaml',
     # 'octane': '/home/elo/CODES/SCI-ML/RLIntegratorSelector/large_mechanism/large_mechanism/octane.yaml',
     #'methane': 'gri30.yaml',
 }
@@ -82,7 +82,7 @@ FUEL_SPECIES = {
 
 # Update fuel data paths - you should update these with your actual paths
 FUEL_DATA_PATHS = {
-    'n-dodecane': '/home/elo/CODES/SCI-ML/RLIntegratorSelector/ember_samples_uniform_z_n-dodecane/initial_conditions_uniform_z_n_dodecane.npz',
+    'n-dodecane': '/home/elo/ubuntu_codes/SCI-ML/RLIntegratorSelector/ember_samples_uniform_z_n-dodecane/initial_conditions_uniform_z_n_dodecane.npz',
     # 'octane': '/home/elo/CODES/SCI-ML/RLIntegratorSelector/ember_samples_uniform_z_octane/initial_conditions_uniform_z_octane.npz',
     #'methane': '/home/elo/CODES/SCI-ML/RLIntegratorSelector/ember_samples_uniform_z_CH4/initial_conditions_uniform_z_ch4.npz',
 }
