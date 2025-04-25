@@ -90,15 +90,15 @@ class Args:
     #                                                            'ARKODE_CASH_5_2_4', 'ARKODE_CASH_5_3_4', 'ARKODE_ARK436L2SA_DIRK_6_3_4',
     #                                                            'ARKODE_ARK437L2SA_DIRK_7_3_4', 'ARKODE_ARK548L2SA_DIRK_8_4_5', 'ARKODE_KVAERNO_7_4_5'])
     
-    integrator_list: List[str] = field(default_factory=lambda: ['CPP_RK23', 'ARKODE_HEUN_EULER', 
-                                                               'ARKODE_BOGACKI', 'ARKODE_ARK324L2SA_ERK', 
-                                                               'CVODE_BDF', 'BDF', 
-                                                               'ARKODE_BILLINGTON_3_3_2',
-                                                               'ARKODE_ARK437L2SA_DIRK_7_3_4', ])
-    # integrator_list: List[str] = field(default_factory=lambda: ['ARKODE_HEUN_EULER', 'CVODE_BDF',
-    #                                                             'ARKODE_KVAERNO_4_2_3'])
+    # integrator_list: List[str] = field(default_factory=lambda: ['CPP_RK23', 'ARKODE_HEUN_EULER', 
+    #                                                            'ARKODE_BOGACKI', 'ARKODE_ARK324L2SA_ERK', 
+    #                                                            'CVODE_BDF',
+    #                                                            'ARKODE_BILLINGTON_3_3_2',
+    #                                                            'ARKODE_ARK437L2SA_DIRK_7_3_4', ])
+    integrator_list: List[str] = field(default_factory=lambda: ['ARKODE_HEUN_EULER', 'CVODE_BDF',
+                                                             'CPP_RK23'])
     tolerance_list: List[Tuple[float, float]] = field(
-        default_factory=lambda: [(1e-6, 1e-8)]
+        default_factory=lambda: [(1e-10, 1e-12)]
     )
     
     # Feature configuration

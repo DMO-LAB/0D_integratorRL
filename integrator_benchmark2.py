@@ -151,6 +151,11 @@ class IntegratorBenchmark:
             'stage': [],
             'best_action': []
         }
+
+        # Create a dictionary to store the done status of each action
+        actions_dones = {
+            i: False for i, (method, rtol, atol) in enumerate(self.action_list)
+        }
         
         # Add columns for each action
         for i, (method, rtol, atol) in enumerate(self.action_list):
@@ -190,10 +195,7 @@ class IntegratorBenchmark:
             # Dictionary to store metrics for determining best action
             step_metrics = {}
             
-            # Create a dictionary to store the done status of each action
-            actions_dones = {
-                i: False for i, (method, rtol, atol) in enumerate(self.action_list)
-            }
+            
             
             # Take a step with each action
             for i, (method, rtol, atol) in enumerate(self.action_list):
@@ -240,7 +242,9 @@ class IntegratorBenchmark:
                         # For terminated environments, set future metrics to infinity
                         actions_dones[i] = True
                 except Exception as e:
-                    print(f"Exception raise for environment {i} ({action_name}) at step {step}")
+                    # import traceback
+                    # traceback.print_exc()
+                    print(f"Exception raise for environment {i} ({action_name}) at step {step} - {e}")
                     results[f"{action_name}_cpu_time"].append(float('inf'))
                     results[f"{action_name}_error"].append(float('inf'))
                     results[f"{action_name}_reward"].append(float('-inf'))
@@ -889,14 +893,14 @@ def main():
     parser = argparse.ArgumentParser(description='Benchmark different integrators across multiple conditions.')
     
     # Temperature range parameters
-    parser.add_argument('--temp_min', type=float, default=1000.0, help='Minimum temperature (K)')
-    parser.add_argument('--temp_max', type=float, default=1800.0, help='Maximum temperature (K)')
+    parser.add_argument('--temp_min', type=float, default=300.0, help='Minimum temperature (K)')
+    parser.add_argument('--temp_max', type=float, default=1500.0, help='Maximum temperature (K)')
     parser.add_argument('--num_steps_temp', type=int, default=101, help='Number of temperature steps')
     
     # Phi range parameters
-    parser.add_argument('--phi_min', type=float, default=2, help='Minimum equivalence ratio')
-    parser.add_argument('--phi_max', type=float, default=80, help='Maximum equivalence ratio')
-    parser.add_argument('--num_steps_phi', type=int, default=10001, help='Number of phi steps')
+    parser.add_argument('--phi_min', type=float, default=0, help='Minimum equivalence ratio')
+    parser.add_argument('--phi_max', type=float, default=10, help='Maximum equivalence ratio')
+    parser.add_argument('--num_steps_phi', type=int, default=1001, help='Number of phi steps')
     
     # Other parameters
     parser.add_argument('--pressure', type=float, default=1.0, help='Pressure (atm)')
@@ -907,7 +911,7 @@ def main():
     parser.add_argument('--metric', type=str, choices=['cpu_time', 'error', 'reward'], default='reward',
                         help='Metric to use for determining best integrator')
     parser.add_argument('--output_dir', type=str, default='benchmark_results', help='Directory to save results')
-    parser.add_argument('--max_steps', type=int, default=100, help='Maximum number of steps per benchmark')
+    parser.add_argument('--max_steps', type=int, default=2000, help='Maximum number of steps per benchmark')
     parser.add_argument('--num_samples', type=int, default=500, help='Number of random samples to run')
     
     args_cli = parser.parse_args()
